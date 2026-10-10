@@ -56,9 +56,38 @@ function scryfallUrlFor(ref) {
  *
  * 想省流量可以用 `Range: bytes=0-0`（存在 → 206，不存在 → 404），已验证可靠。
  */
+/**
+ * 探测一个 URL 的状态码。
+ *
+ * ── 为什么要重试，而不是一次定生死 ─────────────────────────────────────
+ *
+ * images.mtgch.com 挂在腾讯 EdgeOne 后面，一次解析出 4 个地址，而**多数地址会
+ * 直接拒连**：实测同一个 URL 连续 12 次只有 1 次拿到 200。所以「连不上」在这里
+ * 是常态，不是结论——把它当成断言失败会让这个脚本每次都红。
+ *
+ * 更需要小心的是 Node 自己的行为：连接多个地址都失败时，fetch 抛的是
+ * **AggregateError**（`error.errors` 里是每一条 ECONNREFUSED），而不是普通的
+ * TypeError。早先这个脚本就是被它直接带崩的，连一行结果都没打印出来。
+ *
+ * 所以：重试若干轮，任何一次拿到状态码就算数；全部失败才报 ERR。
+ */
+const ATTEMPTS = 20;
+
 async function probe(url) {
-  const response = await fetch(url, { redirect: "follow" });
-  return response.status;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      // Range 让响应只传 1 个字节：存在 → 206，不存在 → 404。
+      const response = await fetch(url, {
+        redirect: "follow",
+        headers: { Range: "bytes=0-0" },
+      });
+      return response.status;
+    } catch {
+      // 连接被拒 / AggregateError / 超时——换下一个边缘节点再试。
+      if (attempt < ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+  return "ERR";
 }
 
 let failures = 0;
@@ -81,7 +110,10 @@ for (const sample of SAMPLES) {
   }
   const url = urlFor(sample.tier, parsed.ref);
   const status = await probe(url);
-  const ok = status === sample.expect;
+  // 「存在」用 206 表达：探测带 `Range: bytes=0-0`，所以一份存在的图回的是 206
+  // 而不是 200。断言写成「期望 200」再对 206 判失败就会把好消息报成坏消息——
+  // 这里两种都算命中，只有 404 才是「这张印刷没有这一层」。
+  const ok = sample.expect === 200 ? status === 200 || status === 206 : status === sample.expect;
   if (!ok) failures += 1;
   console.log(`${ok ? "✔" : "✖"} ${sample.label.padEnd(30)} ${String(status).padEnd(4)} (期望 ${sample.expect})  ${url}`);
 }

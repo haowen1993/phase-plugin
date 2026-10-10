@@ -1,16 +1,21 @@
 /**
- * 纯逻辑单测：URL 解析、层级改写与 srcset 处理。
+ * 纯逻辑单测：URL 解析、层级改写、srcset 处理、失败判定。
  *
  * 直接加载 `src/content.js` 本体（不复制一份实现），在 Node 里跑：脚本在没有
  * DOM 时会跳过装配，只把纯函数挂到 `globalThis.__phaseZhCardArt`。
  *
- *     node --test phase-rs-zh/test/
+ *     node --test test/content.test.mjs
  *
  * 这里断言的全部 URL 形状都是对真实 CDN 实测过的：
  *   https://images.mtgch.com/zhs/normal/front/f/2/<uuid>.webp  → 200（中文）
  *   https://images.mtgch.com/sf/normal/front/f/2/<uuid>.webp   → 200（英文）
  *   https://images.mtgch.com/zhs/art_crop/…                    → 404（无中文裁切图）
  *   https://images.mtgch.com/sf/art_crop/…                     → 200，626x457
+ *
+ * 连接层同样是实测过的，`probeArtUrl` 的用例就建立在它上面：同一个图片 URL 连续
+ * 12 次只有 1 次拿到 200，其余是连接被拒；而每个响应里
+ * `access-control-allow-origin` 会出现**两次**（浏览器判该响应无效，所以
+ * `crossOrigin="anonymous"` 的元素永远取不到这张图）。
  */
 
 import assert from "node:assert/strict";
@@ -26,10 +31,15 @@ const {
   version,
   parseArtUrl,
   urlFor,
+  urlForRelay,
   rewriteUrl,
   nextTierUrl,
+  retryUrl,
+  probeArtUrl,
   mapSrcset,
+  stepUrl,
   givenUp,
+  retryCounts,
 } = globalThis.__phaseZhCardArt;
 
 /** 真实印刷：2X2 #117 Lightning Bolt（有中文图）。 */
@@ -54,7 +64,9 @@ test("VERSION 与 package.json 的 version 一致（防漂移）", () => {
 
 test("parseArtUrl 认出三个来源层级", () => {
   assert.equal(parseArtUrl(SCRYFALL).tier, "scryfall");
+  assert.equal(parseArtUrl(SCRYFALL).origin, "direct");
   assert.equal(parseArtUrl(ZHS).tier, "zh");
+  assert.equal(parseArtUrl(ZHS).origin, "cdn");
   assert.equal(parseArtUrl(SF).tier, "mtg-en");
   assert.deepEqual(parseArtUrl(SCRYFALL).ref, {
     size: "normal",
@@ -63,6 +75,46 @@ test("parseArtUrl 认出三个来源层级", () => {
     shardB: SHARD_B,
     printingId: ID,
   });
+});
+
+test("parseArtUrl 认得同源中继地址（应用自己发出的中文图）", () => {
+  // phase.rs 的中文分支为了绕开重复的 CORS 头会把卡图改成走同源中继。那时页面上
+  // 根本没有 scryfall.io 地址可供改写，脚本必须认得出这条路径，才能在它 404 时
+  // 把阶梯接着往下走。
+  const zh = parseArtUrl(`/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`);
+  assert.equal(zh.tier, "zh");
+  assert.equal(zh.origin, "relay");
+  assert.deepEqual(zh.ref, {
+    size: "normal",
+    face: "front",
+    shardA: SHARD_A,
+    shardB: SHARD_B,
+    printingId: ID,
+  });
+
+  const sf = parseArtUrl(`/card-art/sf/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`);
+  assert.equal(sf.tier, "mtg-en");
+  assert.equal(sf.origin, "relay");
+});
+
+test("中继地址上只换层级、不换寻址方式", () => {
+  // 把相对路径写回成绝对地址会把应用刻意绕开的 CORS 又拉回来——重复的
+  // access-control-allow-origin 会让它从「有英文图」变成「没图」。
+  const zh = `/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`;
+  const sf = `/card-art/sf/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`;
+
+  assert.equal(rewriteUrl(zh), zh, "已经在中继层的中文图不该被改写");
+  assert.equal(nextTierUrl(zh), sf, "中继的中文图 404 后应降为中继的英文图");
+  assert.equal(urlForRelay("zh", parseArtUrl(zh).ref), zh);
+});
+
+test("中继与图床各自独立，互不串层", () => {
+  const relayZh = `/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`;
+  const cdnZh = ZHS;
+  // 同一条印刷、同一层级，两种寻址方式各自往回写自己的形状。
+  assert.equal(parseArtUrl(relayZh).ref.printingId, parseArtUrl(cdnZh).ref.printingId);
+  assert.equal(urlFor("zh", parseArtUrl(cdnZh).ref), cdnZh);
+  assert.equal(urlForRelay("zh", parseArtUrl(relayZh).ref), relayZh);
 });
 
 test("parseArtUrl 保留尺寸与正背面", () => {
@@ -93,6 +145,10 @@ test("parseArtUrl 拒绝非卡图与畸形输入", () => {
     `https://cards.scryfall.io/normal/sideways/${SHARD_A}/${SHARD_B}/${ID}.jpg`, // 非法面
     // uuid 与分片目录不一致：宁可漏改，不可改错
     `https://cards.scryfall.io/normal/front/a/b/${ID}.jpg`,
+    // 中继路径同样要求语言前缀与合法形状
+    `/card-art/zzs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`,
+    `/card-art/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`,
+    `/card-art/zhs/normal/front/a/b/${ID}.webp`,
   ];
   for (const input of rejected) {
     assert.equal(parseArtUrl(input), null, `应拒绝：${input}`);
@@ -102,6 +158,11 @@ test("parseArtUrl 拒绝非卡图与畸形输入", () => {
 test("parseArtUrl 不接受中文层的 art_crop（该尺寸不存在）", () => {
   assert.equal(
     parseArtUrl(`https://images.mtgch.com/zhs/art_crop/front/${SHARD_A}/${SHARD_B}/${ID}.webp`),
+    null,
+  );
+  // 中继的 zhs 层同样没有 art_crop——那与应用走哪条路无关，是图床本身的事实。
+  assert.equal(
+    parseArtUrl(`/card-art/zhs/art_crop/front/${SHARD_A}/${SHARD_B}/${ID}.webp`),
     null,
   );
 });
@@ -141,6 +202,75 @@ test("nextTierUrl 逐级下降，最后一级返回 null", () => {
     `https://cards.scryfall.io/art_crop/front/1/1/${ladderId}.jpg`,
   );
   assert.equal(nextTierUrl("https://example.com/x.jpg"), null);
+});
+
+test("降级不会把查询串带到下一级", () => {
+  // 中文层的 `?…` 是重试参数，大学院废墟的英文层并不认识它；带下去只会白白
+  // 破坏缓存命中。urlFor 不接受查询串，所以它天然不会跟过去。
+  const ladderId = "22b883bb-c95b-4b4f-9a56-ce7a1816307b";
+  const zh = `https://images.mtgch.com/zhs/normal/front/2/2/${ladderId}.webp?r=22b883bb1`;
+  assert.equal(
+    nextTierUrl(zh),
+    `https://images.mtgch.com/sf/normal/front/2/2/${ladderId}.webp`,
+  );
+});
+
+test("retryUrl 保持层级与寻址方式，只换缓存参数", () => {
+  const zh = ZHS;
+  const retriedUrl = retryUrl(zh);
+  assert.ok(retriedUrl.startsWith(ZHS), "重试地址必须仍是同一张图、同一层级");
+  assert.notEqual(retriedUrl, ZHS, "重试必须换一个 URL，否则浏览器会复用它已经失败的缓存条目");
+  assert.equal(parseArtUrl(retriedUrl).tier, "zh");
+
+  const relayed = retryUrl(`/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`);
+  assert.ok(relayed.startsWith(`/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`));
+  assert.equal(parseArtUrl(relayed).origin, "relay", "重试不该把相对路径变成绝对地址");
+
+  // 已经有查询串时用 & 续接，不产生 `?a?b`。
+  const withQuery = retryUrl(`https://images.mtgch.com/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp?ts=1`);
+  assert.equal(withQuery.split("?").length, 2);
+});
+
+test("stepUrl：抖动时原地重试，确认缺图时降级", () => {
+  // 两张印刷各自独占：retryCounts / givenUp 都是模块级状态。
+  const flutterId = "33c993bb-c95b-4b4f-9a56-ce7a1816307c";
+  const flutterZh = `https://images.mtgch.com/zhs/normal/front/3/3/${flutterId}.webp`;
+  const flutterSf = `https://images.mtgch.com/sf/normal/front/3/3/${flutterId}.webp`;
+
+  // 图存在（探测为 true）→ 前两次原地重试，第三次额度用尽必须降级：一个永远取不到
+  // 的资源不能把页面拖在重试循环里。
+  const first = stepUrl(flutterZh, true);
+  const second = stepUrl(flutterZh, true);
+  assert.equal(parseArtUrl(first).tier, "zh");
+  assert.equal(parseArtUrl(second).tier, "zh");
+  assert.notEqual(first, second, "两次重试必须是两个不同的 URL，否则浏览器复用失败缓存");
+  assert.equal(stepUrl(flutterZh, true), flutterSf, "额度用尽后必须降级");
+
+  // 图不存在（探测为 false）→ 立刻降级，不浪费一次重试。
+  const goneId = "44d993bb-c95b-4b4f-9a56-ce7a1816307d";
+  const goneZh = `https://images.mtgch.com/zhs/normal/front/4/4/${goneId}.webp`;
+  assert.equal(
+    stepUrl(goneZh, false),
+    `https://images.mtgch.com/sf/normal/front/4/4/${goneId}.webp`,
+  );
+
+  // 已经在兜底层就不再动它，交给应用自己处理。
+  assert.equal(stepUrl(SCRYFALL, true), null);
+  assert.equal(stepUrl(SCRYFALL, false), null);
+});
+
+test("重试账本与放弃账本是两个独立的账本", () => {
+  // 混用会让「重试过」的图被当成「已放弃」，直接跳过中文层。
+  const retryOnlyId = "55e993bb-c95b-4b4f-9a56-ce7a1816307e";
+  const zh = `https://images.mtgch.com/zhs/normal/front/5/5/${retryOnlyId}.webp`;
+  stepUrl(zh, true);
+  assert.equal(retryCounts.get(`${retryOnlyId}:normal`), 1);
+  assert.equal(givenUp.has(`${retryOnlyId}:normal`), false);
+  // 重试中的图仍然会被改写（没有被放弃），也不会被误判成「已经降过级」。
+  assert.equal(
+    rewriteUrl(`https://cards.scryfall.io/normal/front/5/5/${retryOnlyId}.jpg`),
+    zh,
+  );
 });
 
 test("退到 Scryfall 层后该图不再被改写回去（防 404 死循环）", () => {
@@ -196,6 +326,84 @@ test("urlFor 是唯一的 URL 拼装点", () => {
   assert.equal(urlFor("zh", ref), ZHS);
   assert.equal(urlFor("mtg-en", ref), SF);
   assert.equal(urlFor("scryfall", ref), SCRYFALL.replace("?1783921885", ""));
+  // 同一个 ref 在两种寻址方式下各有一种写法：这是「只换层级，不换寻址方式」
+  // 能成立的原因——层级和寻址方式是正交的两个维度。
+  assert.equal(urlForRelay("zh", ref), `/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`);
+  assert.equal(urlForRelay("mtg-en", ref), `/card-art/sf/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 存在性探测：本脚本区分「连不上」与「真 404」的唯一手段
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 替身 fetch：按给定状态码作答，并记下每次调用的 URL 与选项。
+ *
+ * 用真 `fetch` 不行——`src/content.js` 读的是全局 `fetch`，在 Node 里那就是真的
+ * 会打网络的 undici；这个 CDN 的抖动率会让断言变成随机的。探测逻辑只关心
+ * 「状态码怎么翻译」，所以状态码由测试喂进去。
+ */
+function withFetch(status, run) {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    if (status === "throw") throw new TypeError("Failed to fetch");
+    return { status };
+  };
+  const restore = () => {
+    if (original === undefined) delete globalThis.fetch;
+    else globalThis.fetch = original;
+  };
+  return Promise.resolve(run(calls)).finally(restore);
+}
+
+test("probeArtUrl：2xx/206 判为存在，404/410 判为不存在", async () => {
+  // 用不同印刷做键，避开 30 秒的探测缓存。
+  const alive = `https://images.mtgch.com/zhs/normal/front/a/1/a1c993bb-c95b-4b4f-9a56-ce7a18163001.webp`;
+  const gone = `https://images.mtgch.com/zhs/normal/front/a/2/a2c993bb-c95b-4b4f-9a56-ce7a18163002.webp`;
+
+  await withFetch(206, async (calls) => {
+    assert.equal(await probeArtUrl(alive), true);
+    // Range 是这段逻辑的关键：它让服务器只回 1 个字节，探测因此便宜到可以在
+    // 每次加载失败时都做一次。
+    assert.equal(calls[0].options.headers.Range, "bytes=0-0");
+  });
+  await withFetch(404, async () => {
+    assert.equal(await probeArtUrl(gone), false);
+  });
+});
+
+test("probeArtUrl：读不懂的状态码与网络失败都判为「探不动」", async () => {
+  const weird = `https://images.mtgch.com/zhs/normal/front/a/3/a3c993bb-c95b-4b4f-9a56-ce7a18163003.webp`;
+  const broken = `https://images.mtgch.com/zhs/normal/front/a/4/a4c993bb-c95b-4b4f-9a56-ce7a18163004.webp`;
+
+  // 502 是这类中继/边缘最常见的「上游挂了」——它绝不能等同于「这张牌没中文图」。
+  await withFetch(502, async () => {
+    assert.equal(await probeArtUrl(weird), null);
+  });
+  // fetch 直接抛（连接被拒在浏览器里就是这样）同样是「探不动」。
+  await withFetch("throw", async () => {
+    assert.equal(await probeArtUrl(broken), null);
+  });
+  // 探不动绝不能把异常抛出去——一个探测不该让页面上的图片处理崩掉。
+  await withFetch("throw", async () => {
+    await assert.doesNotReject(() => probeArtUrl(broken + "?again=1"));
+  });
+});
+
+test("probeArtUrl：同一次探测并发只发一次请求", async () => {
+  const shared = `https://images.mtgch.com/zhs/normal/front/a/5/a5c993bb-c95b-4b4f-9a56-ce7a18163005.webp`;
+  await withFetch(200, async (calls) => {
+    // srcset 的两个候选、src 与 srcset 之间都会指到同一个 URL，不该各探一遍。
+    const answers = await Promise.all([
+      probeArtUrl(shared),
+      probeArtUrl(shared),
+      probeArtUrl(shared),
+    ]);
+    assert.deepEqual(answers, [true, true, true]);
+    assert.equal(calls.length, 1, "并发探测同一个 URL 只应发一次请求");
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -276,6 +484,8 @@ test("书签小工具：与 src/content.js 行为一致", () => {
 
   const urls = [
     SCRYFALL, SCRYFALL_SMALL, SCRYFALL_ART, ZHS, SF, SF_ART,
+    `/card-art/zhs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`,
+    `/card-art/sf/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`,
     `https://backs.scryfall.io/normal/0/a/0aeebaf5-8c7d-4636-9e82-8c27447861f7.jpg`,
     `https://images.mtgch.com/zzs/normal/front/${SHARD_A}/${SHARD_B}/${ID}.webp`,
     "data:image/png;base64,AAAA",

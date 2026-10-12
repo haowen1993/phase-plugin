@@ -20,7 +20,7 @@ const SOURCE = readFileSync(new URL("../src/content.js", import.meta.url), "utf8
 vm.runInThisContext(SOURCE, { filename: "content.js" });
 
 const {
-  phases, iconSource, text, selector, viewBox, zoom, patchIcon,
+  phases, iconSource, text, selector, viewBox, zoom, patchIcon, iconInner,
   originalSvgAttrs, isUnpatchedIcon,
 } = globalThis.__phaseZhPhaseIcons;
 
@@ -151,6 +151,22 @@ test("绘制指令：12 个阶段一视同仁地放大 1.15 倍，绕画布中�
   patchIcon(svg, "Draw");
   assert.equal(svg.getAttribute("viewBox"), "0 0 24 24");
 });
+
+// 说明：「放大后会不会被裁」这条**不在这里测**。
+//
+// 试过用纯逻辑测：解析路径坐标、把每个点绕中心放大、再判是否越界。做了三版都不可靠，
+// 而且不可靠的方向是「假绿」——把图形改到画布外，测试照样通过：
+//   1. 只认大写 M/L：漏掉小写 v/h，flag-3 的竖杆拉到 y=30 也发现不了；
+//   2. 补上相对命令：`M8 6h.01` 这类相对小点会被当成绝对坐标，误报「抓牌跑到画布外」；
+//   3. 按时序追踪当前点：Lucide 的齿轮图标里有**隐式重复**的圆弧命令
+//      （`a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915` 是两段），
+//      按「末两个数是终点」取会参数错位，又误报一次。
+//
+// 更根本的是：**圆弧与贝塞尔曲线会鼓到端点之外**，所以「端点都在画布内」根本推不出
+// 「图形没被裁」。这是方法论问题，不是解析器写得不够好。
+//
+// 真值只能靠实际渲染。见 `tools/check-icon-clipping.mjs`：它把 12 个图标按真实变换画在
+// 放大的画布上，直接看有没有笔画触到边缘。
 
 test("每个阶段的绘制结果都非空，且确实来自图标库", () => {
   for (const phase of EXPECTED_PHASES) {

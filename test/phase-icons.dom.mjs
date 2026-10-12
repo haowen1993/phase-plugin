@@ -271,8 +271,8 @@ describe("阶段图标：替换本身", () => {
   it("主阶段带角标，其余阶段不带", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    // 角标是一个 fill=currentColor 的圆角矩形 + 一条反色描边的「M1 / M2」
-    const { x } = icons().badgeBox;
+    // 主阶段整块就是字形：圆角矩形 + 「M1 / M2」，没有 target
+    const { x } = icons().monogramBox;
     expect(iconOf("PreCombatMain").innerHTML).toContain(`<rect x="${x}"`);
     expect(iconOf("PostCombatMain").innerHTML).toContain(`<rect x="${x}"`);
     expect(iconOf("Draw").innerHTML).not.toContain(`<rect x="${x}"`);
@@ -280,10 +280,12 @@ describe("阶段图标：替换本身", () => {
     expect(iconOf("PreCombatMain").innerHTML).not.toBe(iconOf("PostCombatMain").innerHTML);
   });
 
-  it("主阶段的内容整体放大过（补偿 24 网格四周的留白）", () => {
+  it("十个非主阶段图标走缩放，M1/M2 不套缩放", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    expect(iconOf("PreCombatMain").innerHTML).toContain(`scale(${icons().scale})`);
+    expect(iconOf("Draw").innerHTML).toContain(`scale(${icons().scale})`);
+    // 主阶段整块就是字形，坐标本来就按 24 网格算，不需要再缩放
+    expect(iconOf("PreCombatMain").innerHTML).not.toContain("scale(");
   });
 
   it("兄弟节点没被动过：激活条与停止点都还在", () => {

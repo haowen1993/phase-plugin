@@ -21,7 +21,7 @@ vm.runInThisContext(SOURCE, { filename: "content.js" });
 
 const {
   phases, iconSource, text, badge, selector, viewBox, scale,
-  badgeMarkup, badgeBox, badgeLabel, badgeRadius, patchIcon,
+  badgeMarkup, monogramBox, monogramGlyph, patchIcon,
   originalSvgAttrs, isUnpatchedIcon,
 } = globalThis.__phaseZhPhaseIcons;
 
@@ -77,45 +77,143 @@ test("共用同一个图形的阶段，出处也必须一致", () => {
   assert.equal(iconSource.PreCombatMain, "tabler/target");
 });
 
-test("两个主阶段都带角标，其余阶段一个都不带", () => {
+test("只有两个主阶段是 M1 / M2 字形，其余阶段照旧用图标库的图形", () => {
   assert.deepEqual(Object.keys(badge).sort(), ["PostCombatMain", "PreCombatMain"]);
   assert.equal(badge.PreCombatMain, "1");
   assert.equal(badge.PostCombatMain, "2");
 });
 
-test("角标几何：贴在右上角，且足够宽写下两个字符", () => {
-  const { x, y, w, h } = badgeBox;
-  const [vbW] = viewBox.split(" ").map(Number).slice(2);
-  assert.equal(vbW, 24, "图标库统一 24 网格，角标坐标是按它算的");
-  // 角标允许溢出 viewBox（SVG 默认不裁剪），但必须落在右上角
-  assert.ok(x > vbW / 2, "角标必须在画布右半部");
-  assert.ok(y + h / 2 < vbW / 2, "角标必须在画布上半部");
-  // 最早是圆 + 单个数字，圆里塞不下「M1」两个字符，才改成圆角矩形。
-  // 这条断言守住那个结论：宽度必须够两个字符站。
-  assert.ok(w >= 8, `角标太窄，写不下两个字符：${w}`);
-  assert.ok(h >= 5, `角标太矮：${h}`);
-  assert.ok(badgeRadius < h / 2, "圆角半径不该把矩形变成胶囊");
+test("M1/M2 字形：圆角矩形 + 字，整块占满图标位、居中、不出画布", () => {
+  const { x, y, w, h, r } = monogramBox;
+  const [vbW, vbH] = viewBox.split(" ").map(Number).slice(2);
+  assert.equal(vbW, 24, "图标库统一 24 网格，字形坐标是按它算的");
+
+  // 这是**整个图标**，不是挂在某个图形角上的小角标——所以它要占满图标位并居中。
+  // 早两版都是「target 同心圆 + 角上挂一个小标签」，那既让两个主阶段看起来仍是
+  // 同一个图案，也在 10px 里塞不下。现在没有别的图形要避让。
+  assert.ok(w >= 12, `字形太窄，两个字符站不下：${w}`);
+  assert.equal(x + w / 2, vbW / 2, "字形应当水平居中");
+  assert.equal(y + h / 2, vbH / 2, "字形应当垂直居中");
+  assert.ok(x >= 0 && y >= 0 && x + w <= vbW && y + h <= vbH, "字形不该超出画布");
+  assert.ok(r > 0 && r < h / 2, "圆角半径应当在「有圆角」与「不是胶囊」之间");
+
+  // 字要真的落在框里，不能顶出去。
+  //
+  // **不能用字符串模式去核对坐标。** 这里连踩三坑，全是同一个根因：
+  //   1. `2.55.25` 是两个紧贴的数（2.55 与 0.25），第二个省略了前导零；而
+  //      `c0 .95` 里的 0 与 .95 是两个独立的数。判据是「两段之间有没有空白」。
+  //   2. 圆弧（`a`）的参数里，只有末两个数是终点坐标，前面还有半径、旋转、flag。
+  //   3. **小写命令是相对坐标**。`a1.3 1.3 0 0 1 2.6.3` 的终点是「当前点 + (2.6, 0.3)」，
+  //      不是绝对 (2.6, 0.3)。把它当绝对坐标比，会得出「2 画到画布外面去了」这种
+  //      假结论——而真结论要靠追踪当前点才拿得到。
+  //
+  // 所以这里老老实实写一个最小的路径遍历器，按 SVG 语义追踪当前点，输出每段的
+  // 起点与终点。判据只有一条：所有端点都必须在字形框内。
+  const bounds = { x1: x, x2: x + w, y1: y, y2: y + h };
+  const inBox = (px, py) => px > bounds.x1 && px < bounds.x2 && py > bounds.y1 && py < bounds.y2;
+
+  /** 把 path 拆成 [命令字母, 数字数组] 列表（处理紧贴小数的合并）。 */
+  function tokenizePath(d) {
+    const parts = d.match(/\s*([A-Za-z]|-?[0-9]*\.?[0-9]+)/g) ?? [];
+    const merged = [];
+    for (const part of parts) {
+      const spaced = /^\s/.test(part);
+      const token = part.trim();
+      const previous = merged[merged.length - 1];
+      const glues = !spaced && token.startsWith(".") && previous !== undefined
+        && !previous.spaced && !/[A-Za-z]/.test(previous.token);
+      if (glues) previous.token += token;
+      else merged.push({ token, spaced });
+    }
+    const out = [];
+    let command = null;
+    let buffer = [];
+    for (const { token } of merged) {
+      if (/[A-Za-z]/.test(token)) {
+        if (command !== null) out.push([command, buffer]);
+        command = token;
+        buffer = [];
+      } else {
+        buffer.push(Number(token));
+      }
+    }
+    if (command !== null) out.push([command, buffer]);
+    return out;
+  }
+
+  /** 按 SVG 语义走一遍路径，返回每段的 [起点, 终点]（绝对坐标）。 */
+  function segments(d) {
+    const result = [];
+    let cx = 0;
+    let cy = 0;
+    for (const [rawCommand, n] of tokenizePath(d)) {
+      const relative = rawCommand === rawCommand.toLowerCase();
+      const command = rawCommand.toUpperCase();
+      const move = (x, y) => {
+        const ax = relative ? cx + x : x;
+        const ay = relative ? cy + y : y;
+        result.push([[cx, cy], [ax, ay]]);
+        cx = ax;
+        cy = ay;
+      };
+      if (command === "M" || command === "L") {
+        for (let i = 0; i + 1 < n.length; i += 2) move(n[i], n[i + 1]);
+      } else if (command === "A") {
+        // 参数顺序：rx ry 旋转 large-arc sweep x y —— 只有末两个是终点
+        move(n[n.length - 2], n[n.length - 1]);
+      } else if (command === "C") {
+        for (let i = 0; i + 5 < n.length; i += 6) move(n[i + 4], n[i + 5]);
+      } else if (command === "H") {
+        // 水平线只有 x 一个参数。**绝对**（大写 H）时 y 保持当前值，相对（小写 h）
+        // 时才在原地叠加——写成 move(value, 0) 会让大写 H 把 y 拖回 0。
+        for (const value of n) {
+          if (relative) move(value, 0);
+          else move(value, cy);
+        }
+      } else if (command === "V") {
+        // 同上，垂直线只有 y 一个参数。
+        for (const value of n) {
+          if (relative) move(0, value);
+          else move(cx, value);
+        }
+      }
+    }
+    return result;
+  }
+
+  for (const [name, d] of Object.entries(monogramGlyph)) {
+    const list = segments(d);
+    assert.ok(list.length > 0, `${name} 的路径解析不出任何线段`);
+    for (const [[sx, sy], [ex, ey]] of list) {
+      // 每条线段的**终点**都是真正的笔画端点，必须在框里。
+      assert.ok(inBox(ex, ey), `${name}: 线段终点 (${ex}, ${ey}) 超出字形框`);
+      // 起点只有画出来的那部分才算数：路径开头那个 `M` 是「把笔挪过去」，它从
+      // (0,0) 起跳，那不是笔画。
+      if (!(sx === 0 && sy === 0)) {
+        assert.ok(inBox(sx, sy), `${name}: 线段起点 (${sx}, ${sy}) 超出字形框`);
+      }
+    }
+  }
 });
 
-test("角标的文字用描边画，不依赖字体", () => {
+test("M1/M2 的字用描边画，不依赖字体", () => {
   for (const digit of ["1", "2"]) {
     const markup = badgeMarkup(digit);
-    assert.ok(markup.includes("<rect"), `${digit} 缺少底色矩形`);
-    assert.ok(markup.includes('fill="currentColor"'), `${digit} 的底色应跟随主题色`);
-    assert.ok(markup.includes("<path"), `${digit} 的文字应当是路径而不是 <text>`);
+    assert.ok(markup.includes("<rect"), `${digit} 缺少圆角矩形`);
+    assert.ok(markup.includes("<path"), `${digit} 的字应当是路径而不是 <text>`);
     assert.ok(!markup.includes("<text"), `${digit} 不应依赖字体渲染`);
-    assert.ok(markup.includes('stroke="#0f172a"'), `${digit} 的文字应当是反色`);
-    // 两个字符：M 加一个数字
-    assert.ok(markup.includes(badgeLabel.M), `${digit} 缺少 M 的笔画`);
-    assert.ok(markup.includes(badgeLabel[digit]), `${digit} 缺少数字的笔画`);
+    // 描边式而不是实心底：另外 10 个图标都是描边式，实心块会格格不入
+    assert.ok(!markup.includes('fill="currentColor"'), `${digit} 不该是实心底`);
+    assert.ok(markup.includes(monogramGlyph.M), `${digit} 缺少 M 的笔画`);
+    assert.ok(markup.includes(monogramGlyph[digit]), `${digit} 缺少数字的笔画`);
   }
   assert.notEqual(badgeMarkup("1"), badgeMarkup("2"), "M1 和 M2 必须是两个不同的形状");
 });
 
-test("角标文字是 M1 / M2，不是光秃秃的数字", () => {
-  assert.equal(badgeLabel.M.length > 0, true);
+test("字形是三组笔画：M、1、2", () => {
+  assert.ok(monogramGlyph.M.length > 0);
   // 单看一个「1」读者不知道它指什么；M1/M2 是万智牌玩家的通用说法
-  assert.equal(Object.keys(badgeLabel).sort().join(","), "1,2,M");
+  assert.equal(Object.keys(monogramGlyph).sort().join(","), "1,2,M");
 });
 
 test("绘制指令：viewBox 换成 24 网格、走描边式、保留尺寸类", () => {
@@ -131,27 +229,21 @@ test("绘制指令：viewBox 换成 24 网格、走描边式、保留尺寸类",
   assert.equal(svg.getAttribute("class"), "h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
 });
 
-test("绘制指令：图标内容整体缩放，角标占据右上角", () => {
+test("绘制指令：图标内容整体缩放（M1/M2 不走这条路）", () => {
   const svg = fakeSvg({ viewBox: viewBox });
   patchIcon(svg, "Upkeep");
   assert.ok(scale > 0.7 && scale < 1.3, `缩放系数应当在合理区间：${scale}`);
   assert.ok(svg.innerHTML.includes(`scale(${scale})`), "内容应当被包在缩放组里");
   assert.ok(svg.innerHTML.includes('transform-origin="12 12"'), "缩放应当以画布中心为原点");
 
-  // 角标与圆形图案有一小块重叠是**设计如此、也是无奈**：图标本身只有 10px，要在
-  // 右上角写下「M1」两个字符，24 网格里放不下「两者不碰」。实测这个重叠视觉上可接受
-  // ——角标压在 target 外圈的外侧一小块，同心圆仍认得出。所以这里不加「不许重叠」
-  // 的断言（那是几何上做不到的），只守真正的约束：
-  //   1. 不出画布上方与右侧      → 否则会被按钮裁掉
-  //   2. 确实在右上角            → 右上角才能和正上方的激活条、正下方的停止点错开
-  const [vbW, vbH] = viewBox.split(" ").map(Number).slice(2);
-  assert.ok(badgeBox.y >= 0, `角标上边缘出画布：${badgeBox.y}`);
-  assert.ok(badgeBox.x + badgeBox.w <= vbW + 1, `角标右侧超出太多：${badgeBox.x + badgeBox.w}`);
-  assert.ok(badgeBox.x > vbW / 2 && badgeBox.y + badgeBox.h < vbH / 2, "角标必须在右上角");
+  // 主阶段整块就是字形，不需要缩放（坐标本来就是按 24 网格算的）
+  const main = fakeSvg({ viewBox: viewBox });
+  patchIcon(main, "PreCombatMain");
+  assert.ok(!main.innerHTML.includes("scale("), "M1/M2 不该再套一层缩放");
 });
 
 test("绘制指令：只有主阶段画角标", () => {
-  const MARK = `x="${badgeBox.x}"`; // 角标底矩形的起点，够独特
+  const MARK = `x="${monogramBox.x}"`; // 圆角矩形的起点，够独特
   const main = fakeSvg({ viewBox: viewBox });
   patchIcon(main, "PreCombatMain");
   assert.ok(main.innerHTML.includes(MARK), "主阶段应当带角标");

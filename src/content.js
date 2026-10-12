@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.2.1";
+  const VERSION = "1.2.2";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -850,10 +850,10 @@
   const ICON_VIEW_BOX = "0 0 24 24";
   const ICON_STROKE_WIDTH = "2";
 
-  // 图标内容在 24 网格里四周留了 2 的空白，缩到 10px 时会比原版 14×14 的图形略小。
-  // 放大能补回这点，但主阶段的右上角要放「M1/M2」角标，放大会顶到角标上：target 的
-  // 外圈半径 9，放大 1.12 后右边缘到 13.8，而角标左边缘 15.0——只剩 1.2 的余量。
-  // 取 1.0 是不放大也不缩小的折中，两个图形在 10px 下都不至于糊。
+  // 图标内容在 24 网格里四周留了 2 的空白，缩到 10px 时会比原版 14×14 的图形略小，
+  // 原来的 1.12 是用来补回这一点的。挂过一轮右上角角标，那时必须收到 1.0 才不撞；
+  // 现在两个主阶段整块换成了「M1/M2」，没有角标要避让，但 1.0 已经验证过 10px 下
+  // 十个图标都清楚，就不来回折腾了。
   const ICON_SCALE = 1.0;
 
   const PHASE_ICON_INNER = {
@@ -872,49 +872,49 @@
   };
 
   /**
-   * 角标：右上角一个反色的圆角矩形，里面是「M1」/「M2」。
+   * 两个主阶段的图标**整体就是「M1」/「M2」**：一个描边圆角矩形，里面是字。
    *
-   * 位置是右上角而不是右下角，因为 `PhaseStopBar.tsx` 的「已设置停止点」圆点在
-   * **正下方中央**（`-bottom-0.5 left-1/2`），放右下角会和它挤在一起。右上角只有
-   * 「当前阶段」的琥珀色小条（在正上方中央），两者错得开。
+   * 这里换过三版，写清楚免得再走回去：
    *
-   * **为什么是矩形而不是圆。** 最早用的是圆 + 数字 1/2：单个数字在 10px 图标旁边
-   * 已经勉强，想写清「第一/第二」就必须两个字符，而圆里塞不下两个字。换成圆角矩形
-   * 横向扩到 9.6 宽（图标只有 10px 宽），两个字符才有地方站。代价是角标比图标本身
-   * 还宽——这是「要把两个字符画清楚」的必然结果，不是没调好。
+   *   1. 圆 + 数字 1/2 —— 单看一个数字读者不知道它指什么，10px 下也糊。
+   *   2. target 同心圆 + 右上角挂一个「M1」小角标 —— 两个毛病：一是图形仍是
+   *      target，两个主阶段看起来还是同一个图案；二是图标只有 10px，而角上写清两个
+   *      字符至少横向要 6 个单位，24 网格里放不下「角标与图形不重叠」，只能让两者
+   *      叠着，很挤。
+   *   3. **现在这版：不要 target，整块就是「M1」/「M2」**。图形本身就是标签，两个
+   *      主阶段一眼可分，也不再有任何重叠问题。
+   *
+   * 圆角矩形画成**描边**而不是实心底：另外 10 个图标都是描边式（`fill="none"` +
+   * `stroke="currentColor"`），实心块放进去会显得格格不入，而且实心底要配反色文字，
+   * 激活变色时会多一层要照看的东西。
    */
-  const BADGE_BOX = { x: 15.0, y: 0.4, w: 8.2, h: 5.6 };
-  const BADGE_RADIUS = 1.4;
+  const MONOGRAM_BOX = { x: 4, y: 5, w: 16, h: 14, r: 3 };
 
   /**
-   * 「M」+ 数字的笔画。**手绘路径而不是 `<text>`**：不依赖字体（中文环境下
-   * `-apple-system` 落到哪个字体会影响字宽，两个字符就可能溢出角标），而且笔画
-   * 粗细随图标一起缩放，10px 下不会糊掉。
+   * 「M」+ 数字的笔画。**手绘路径而不是 `<text>`**：不依赖字体——中文环境下
+   * `-apple-system` 落到哪个字体会影响字宽，两个字符就可能溢出框；手绘路径还顺带让
+   * 笔画粗细随图标一起缩放，10px 下不会糊。
    */
-  const BADGE_LABEL = {
+  const MONOGRAM_GLYPH = {
     // M：三笔，左边竖 / 中间 V / 右边竖
-    M: "M16.3 4.9V1.5M16.3 1.95L17.65 3.65L19 1.95M19 4.9V1.5",
-    "1": "M20.2 1.5L21.25 1.15V4.9",
-    "2": "M20.05 1.85a1.1 1.1 0 0 1 2.15.2c0 .8-2.15 1.1-2.15 2.25h2.3",
+    M: "M9.1 15V9M9.1 9.9L11.05 12.4L13 9.9M13 15V9",
+    "1": "M14.8 9.3L16 8.9V15",
+    // 2：上半一个弯 + 一撇到底 + 底横。
+    // 这里踩过一次：原来写的是 `a1.3 1.3 0 0 1 2.55.25`——圆弧终点算出来是
+    // (2.55, 0.25)，落在画布左上角外面，于是「2」的上半截根本画不出来（被裁掉，
+    // 肉眼看只是觉得字有点怪）。测试里那条「笔画不出框」的断言就是抓到它的地方。
+    "2": "M14.4 10.1a1.3 1.3 0 0 1 2.6.3c0 .95-1.2 1.6-2.05 2.45L14.4 15h2.85",
   };
 
-  function badgeMarkup(digit) {
-    const { x, y, w, h } = BADGE_BOX;
-    // 笔画 #0f172a 是按钮激活态底色（`bg-cyan-950/82` 深青）的近似值——
-    // 角标底色跟随 currentColor，字就必须是反色才读得出来。
-    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${BADGE_RADIUS}"`
-      + ' fill="currentColor" stroke="none"/>'
-      + `<path d="${BADGE_LABEL.M}${BADGE_LABEL[digit]}" fill="none" stroke="#0f172a"`
-      + ' stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/>';
-  }
-
-  /**
-   * 主阶段才带角标：两个阶段用同一个 target 图形，靠 M1 / M2 区分。
-   *
-   * 用 M1/M2 而不是 1/2：单看一个数字读者不知道它指什么，而「主阶段一 / 主阶段二」
-   * 是万智牌玩家的通用说法（MTGA 里就是 M1、M2）。
-   */
+  /** 主阶段 → 角标里的数字。有它才画「M<n>」，否则画图标库的图形。 */
   const PHASE_BADGE = { PreCombatMain: "1", PostCombatMain: "2" };
+
+  function badgeMarkup(digit) {
+    const { x, y, w, h, r } = MONOGRAM_BOX;
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/>`
+      + `<path d="${MONOGRAM_GLYPH.M}${MONOGRAM_GLYPH[digit]}"`
+      + ' stroke-width="1.35"/>';
+  }
 
   function patchIcon(svg, phase) {
     svg.setAttribute("viewBox", ICON_VIEW_BOX);
@@ -923,10 +923,12 @@
     svg.setAttribute("stroke-width", ICON_STROKE_WIDTH);
     svg.setAttribute("stroke-linecap", "round");
     svg.setAttribute("stroke-linejoin", "round");
-    const badge = PHASE_BADGE[phase];
-    svg.innerHTML = `<g transform="scale(${ICON_SCALE})" transform-origin="12 12">`
-      + PHASE_ICON_INNER[phase] + "</g>"
-      + (badge ? badgeMarkup(badge) : "");
+    const digit = PHASE_BADGE[phase];
+    // 主阶段整块换成 M1/M2，所以**没有**图标库的图形要画。
+    const core = digit ? badgeMarkup(digit)
+      : `<g transform="scale(${ICON_SCALE})" transform-origin="12 12">`
+        + PHASE_ICON_INNER[phase] + "</g>";
+    svg.innerHTML = core;
   }
 
   /**
@@ -1359,9 +1361,8 @@
     iconInner: PHASE_ICON_INNER,
     text: PHASE_TEXT,
     badge: PHASE_BADGE,
-    badgeBox: BADGE_BOX,
-    badgeLabel: BADGE_LABEL,
-    badgeRadius: BADGE_RADIUS,
+    monogramBox: MONOGRAM_BOX,
+    monogramGlyph: MONOGRAM_GLYPH,
     selector: ICON_SELECTOR,
     viewBox: ICON_VIEW_BOX,
     scale: ICON_SCALE,

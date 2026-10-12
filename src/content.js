@@ -1,7 +1,12 @@
 /**
  * Phase 中文卡图 — 书签小工具正文（bookmarklet，在页面自己的世界里执行）。
  *
- * 作用：把 phase.rs 网页版渲染的卡图，全部改走大学院废墟（mtgch.com）的图床：
+ * 做两件事：
+ *   1. 把 phase.rs 网页版渲染的卡图，全部改走大学院废墟（mtgch.com）的图床；
+ *   2. 把回合阶段栏的 12 个内联 SVG 图标换成公开图标库的图形。
+ * 两件事互不相干，各自独立装配（见文件末尾「阶段图标替换」一节）。
+ *
+ * 作用（卡图部分）：把 phase.rs 网页版渲染的卡图，全部改走大学院废墟（mtgch.com）的图床：
  * 该印刷有简体中文图就用中文图，没有就用大学院废墟自己的英文图。点一次书签脚本即注入
  * 并生效；刷新页面后脚本不再运行，页面自然回到 Scryfall 英文图。
  *
@@ -108,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -573,7 +578,7 @@
     }
   }
 
-  function scan() {
+  function scanCardImages() {
     // 用 querySelectorAll 而不是 document.images：语义相同（都是文档里的 img
     // 元素），但 document.images 并非所有 DOM 实现都提供，测试环境就会缺。
     for (const image of Array.from(document.querySelectorAll("img"))) rewriteElement(image);
@@ -784,6 +789,462 @@
     });
   }
 
+
+  // ────────────────────────────────────────────────────────────────────────
+  // 阶段图标替换
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // phase.rs 的回合阶段栏（重置/维持/抓牌/战斗…共 12 个）用的是**内联 SVG**，
+  // 不是 <img>，所以和上面的卡图逻辑毫无交集：那边改 img 的 src/srcset，这边换
+  // svg 的子节点。两者唯一的共同点是都要对付 React 重渲染，但机制可以各管各的。
+  //
+  // ── 图形来自公开图标库，不自己画 ────────────────────────────────────────
+  //
+  //   Lucide  https://lucide.dev        ISC 许可
+  //   Tabler  https://tabler.io/icons   MIT 许可
+  //
+  // 两者都是宽松许可，可以随本仓库（MIT）一起再分发，README 不需要额外声明。
+  // 这里刻意**不用** Apple 的 SF Symbols：它的许可只覆盖运行在 Apple 系统上的
+  // App，网页不在范围内，而本项目允许别人再分发。
+  //
+  // ── 为什么角标画在 SVG 内部，而不是往 button 里插一个 span ────────────────
+  //
+  // PhaseDot 的 button 有 4 个子节点（激活条 / 图标 / 停止点 / tooltip 锚点），
+  // 它们都是 React 管的。往里塞第五个节点会参与 React 的子节点协调，一旦
+  // PHASE_ICONS 的引用在未来某个版本被打断、React 真的去 diff 子节点，这个外来
+  // 节点就可能被挪走或移除。角标画进 SVG 内部就完全没有这个问题——SVG 的子树
+  // 是我们自己整体替换的，多画一个圆和一个数字不需要 React 知道。
+  //
+  // 代价是数字很小：手机端图标本身只有 10px（见下面 SIZE 的说明），角标圆占
+  // 2.5/24 的 viewBox，数字大约只有 1.4 个屏幕像素高。此时「角标」传达的是
+  // 「这是主阶段」，而「具体是第几个」要靠抽屉里的中文标签。桌面端 14px 下数字
+  // 可以辨认。这是「角标 + 10px 图标」这个组合的物理下限，不是实现取舍。
+
+  /**
+   * 12 个阶段的新图标，`inner` 是图标库 SVG 去掉外层 <svg> 之后的图元。
+   * `source` 只用于排障时说明出处（控制台里能看到）。
+   */
+  const PHASE_ICON_SOURCE = {
+    Untap: "tabler/rotate-clockwise",
+    Upkeep: "lucide/settings",
+    Draw: "tabler/play-card",
+    PreCombatMain: "tabler/target",
+    BeginCombat: "lucide/swords",
+    DeclareAttackers: "lucide/sword",
+    DeclareBlockers: "lucide/shield",
+    CombatDamage: "lucide/zap",
+    EndCombat: "lucide/flag",
+    PostCombatMain: "tabler/target",
+    End: "lucide/hourglass",
+    Cleanup: "lucide/broom",
+  };
+
+  /** 阶段顺序，必须与 phase.rs 的 PhaseStopBar.tsx / MobilePhaseChip.tsx 一致。 */
+  const PHASES = [
+    "Untap", "Upkeep", "Draw", "PreCombatMain",
+    "BeginCombat", "DeclareAttackers", "DeclareBlockers", "CombatDamage", "EndCombat",
+    "PostCombatMain", "End", "Cleanup",
+  ];
+
+  /** 图标库统一 24×24 网格；描边宽度走库的默认值 2。 */
+  const ICON_VIEW_BOX = "0 0 24 24";
+  const ICON_STROKE_WIDTH = "2";
+
+  // 图标内容在 24 网格里四周留了 2 的空白，缩到 10px 时会比原版 14×14 的图形
+  // 略小。放大 1.12 把它补回来，让「视觉重量」和原版接近。
+  const ICON_SCALE = 1.12;
+
+  const PHASE_ICON_INNER = {
+    Untap: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" />',   // tabler/rotate-clockwise
+    Upkeep: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /> <circle cx="12" cy="12" r="3" />',   // lucide/settings
+    Draw: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M19 5v14a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2" /> <path d="M8 6h.01" /> <path d="M16 18h.01" /> <path d="M12 16l-3 -4l3 -4l3 4l-3 4" />',   // tabler/play-card
+    PreCombatMain: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /> <path d="M7 12a5 5 0 1 0 10 0a5 5 0 1 0 -10 0" /> <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />',   // tabler/target
+    BeginCombat: '<path d="m13 19 6-6" /> <path d="M14.5 17.5 3.586 6.586A2 2 0 013 5.172V3h2.172a2 2 0 011.414.586L17.5 14.5" /> <path d="m14.828 6.172 2.586-2.586A2 2 0 0118.828 3H21v2.172a2 2 0 01-.586 1.414l-2.586 2.586" /> <path d="m16 16 4 4" /> <path d="m19 21 2-2" /> <path d="m5 14 4 4" /> <path d="m5 21-2-2" /> <path d="M7.5 16.5 4 20" />',   // lucide/swords
+    DeclareAttackers: '<path d="m11 19-6-6" /> <path d="m5 21-2-2" /> <path d="m8 16-4 4" /> <path d="M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5" />',   // lucide/sword
+    DeclareBlockers: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />',   // lucide/shield
+    CombatDamage: '<path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" />',   // lucide/zap
+    EndCombat: '<path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528" />',   // lucide/flag
+    PostCombatMain: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /> <path d="M7 12a5 5 0 1 0 10 0a5 5 0 1 0 -10 0" /> <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />',   // tabler/target
+    End: '<path d="M5 22h14" /> <path d="M5 2h14" /> <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" /> <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />',   // lucide/hourglass
+    Cleanup: '<path d="M13.5 10.5 22 2" /> <path d="M14.734 13.841a2 2 0 00-.314-2.42L12.58 9.58a2 2 0 00-2.421-.314l-7.657 4.461A1 1 0 002.3 15.3l6.403 6.403a1 1 0 001.571-.204z" /> <path d="m5 18 2-2" /> <path d="m7.699 10.7 5.602 5.601" />',   // lucide/broom
+  };
+
+  /**
+   * 角标：右上角一个实心圆 + 反色的数字。
+   *
+   * 位置是右上角而不是右下角，因为 `PhaseStopBar.tsx` 的「已设置停止点」圆点在
+   * **正下方中央**（`-bottom-0.5 left-1/2`），放右下角会和它挤在一起。右上角只有
+   * 「当前阶段」的琥珀色小条（在正上方中央），两者错得开。
+   */
+  const BADGE_POS = { x: 21.5, y: 2.5, r: 2.5 };
+
+  function badgeMarkup(digit) {
+    const { x, y, r } = BADGE_POS;
+    // 数字用描边画（而不是 <text>）：不依赖字体，且笔画粗细随图标一起缩放。
+    const d = digit === "1"
+      ? "M21.15 1.3L22.15 0.95V3.9"
+      : "M20.5 1.5a1.05 1.05 0 0 1 2.1.15c0 .8-2.1 1.25-2.1 2.55h2.2";
+    return `<circle cx="${x}" cy="${y}" r="${r}" fill="currentColor" stroke="none"/>`
+      + `<path d="${d}" fill="none" stroke="#0f172a" stroke-width="1.1"`
+      + ' stroke-linecap="round" stroke-linejoin="round"/>';
+  }
+
+  /** 主阶段才带角标：两个阶段用同一个 target 图形，靠角标区分。 */
+  const PHASE_BADGE = { PreCombatMain: "1", PostCombatMain: "2" };
+
+  function patchIcon(svg, phase) {
+    svg.setAttribute("viewBox", ICON_VIEW_BOX);
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", ICON_STROKE_WIDTH);
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    const badge = PHASE_BADGE[phase];
+    svg.innerHTML = `<g transform="scale(${ICON_SCALE})" transform-origin="12 12">`
+      + PHASE_ICON_INNER[phase] + "</g>"
+      + (badge ? badgeMarkup(badge) : "");
+  }
+
+  /**
+   * 原始图标的外层 <svg> 只保留 class 与 viewBox 两个属性——其余的（fill 等）
+   * 由 `patchIcon` 重设。写成这个形状是为了让适配层可单测：给一个属性快照就能
+   * 断言，不需要真的建 DOM。
+   */
+  const SVG_ATTRS_KEPT = new Set(["class", "viewBox"]);
+
+  function originalSvgAttrs(svg) {
+    const attrs = {};
+    for (const attr of Array.from(svg.attributes)) {
+      if (SVG_ATTRS_KEPT.has(attr.name)) attrs[attr.name] = attr.value;
+    }
+    return attrs;
+  }
+
+  /**
+   * 这个 <svg> 是我们要替换的阶段图标吗？
+   *
+   * `viewBox="0 0 14 14"` 是唯一的判据，实测它在本仓库全代码库里只出现 12 次，
+   * 全是阶段图标（其它图标用 16×16 / 20×20 / 24×24），所以不会误伤。
+   *
+   * 已经打过标记的按「已处理」返回 false，于是这个函数天然幂等——这一点同时是
+   * 防死循环的关键：我们的写入会再次触发 MutationObserver，认标记就不会无限循环。
+   */
+  const ICON_SELECTOR = 'svg[viewBox="0 0 14 14"]';
+
+  /**
+   * 已经处理过的阶段图标，用 `data-prz` 自己标出来。
+   *
+   * 这个选择器是给「组内计数」用的前身：替换会把 viewBox 改成 24 网格，于是图标
+   * 从 ICON_SELECTOR 里消失——如果一边替换一边 `querySelectorAll`，同组里后面的
+   * 图标序号会往前漂，整组认错。详见 `scanPhaseIcons` 的说明。
+   */
+  const PATCHED_ICON_SELECTOR = "svg[data-prz]";
+
+  /**
+   * `typeof SVGElement` 那半句是给 Node 单测用的：脚本在没有 DOM 时也会被加载
+   * （只暴露纯函数、跳过装配），此时直接写 `instanceof SVGElement` 会抛
+   * ReferenceError，把「能在 Node 里安全加载」这条前提打掉。
+   */
+  function isUnpatchedIcon(node) {
+    return typeof SVGElement === "function"
+      && node instanceof SVGElement
+      && node.getAttribute("viewBox") === "0 0 14 14"
+      && !node.hasAttribute("data-prz");
+  }
+
+  // ── 认出每个 SVG 是哪个阶段 ──────────────────────────────────────────────
+  //
+  // 12 个图标里有 **两组是重复的**，光看 SVG 内容分不出来：
+  //
+  //   Ready 与 PostCombatMain   用同一个菱形（源码里是两段一模一样的 JSX）
+  //   BeginCombat 与 CombatDamage  都用交叉双剑，只差中心一个圆点
+  //
+  // 所以第一层用结构：图标 SVG 永远在 PhaseDot 的 button 里，而 button 在容器里
+  // 的顺序是源码写死的（PhaseStopBar.tsx 的 LEFT_PHASES / RIGHT_PHASES /
+  // COMBAT_PHASES / MobilePhaseChip 的 ALL_PHASES）。按「容器 + 组内序号」就能
+  // 唯一确定，不需要读任何文案，也就不受语言和措辞改动影响。
+  //
+  // 第二层用文案做**交叉校验**：button 的 aria-label 就是 GameplayTooltip 的
+  // 全文（`getPhaseTooltip` 的产物），末尾必然是该阶段的描述，例如「重置步骤。
+  // 你的已横置永久物在此竖置。」文案表见下面 PHASE_TEXT。两层结论不一致时，以
+  // 结构为准（它是源码顺序），但会打一条 console.warn——这正是上游改了文案或
+  // 改了顺序时会暴露出来的地方。
+  //
+  // 为什么不直接用文案当主判据：phase.rs 是多语言的（`useTranslation("game")`），
+  // 换到英文界面这套中文表就全失效了。结构判据不吃这一套。
+
+  /**
+   * 每个阶段的描述文案（`client/src/i18n/locales/zh/game.json` 的
+   * `phaseStop.<key>Description`），用于交叉校验，不参与定位。
+   */
+  const PHASE_TEXT = {
+    Untap: "你的已横置永久物在此竖置。",
+    Upkeep: "维持触发式异能与周期性费用在此发生。",
+    Draw: "你在此抓本回合的牌。",
+    PreCombatMain: "在战斗前使用地并施放咒语。",
+    BeginCombat: "选择攻击者之前的最后一个优先权窗口。",
+    DeclareAttackers: "由攻击牌手选择攻击者。",
+    DeclareBlockers: "由防御牌手选择阻挡者。",
+    CombatDamage: "生物分配并造成战斗伤害。",
+    EndCombat: "造成伤害后的最后一个战斗优先权窗口。",
+    PostCombatMain: "在战斗后使用地或施放咒语。",
+    End: "结束步骤的触发式异能与回合结束时的行动在此发生。",
+    Cleanup: "伤害消失，并检查手牌上限。",
+  };
+
+  /**
+   * 每个阶段的名字（`phaseName.<Phase>`）。**只给手机端 Chip 用**——它的
+   * aria-label 是 `phaseStop.chipAria` 拼出来的「当前阶段：{{phase}}。…」，
+   * 而 `{{phase}}` 填的正是这张表。
+   */
+  const PHASE_NAME = {
+    Untap: "重置步骤",
+    Upkeep: "维持步骤",
+    Draw: "抓牌步骤",
+    PreCombatMain: "战斗前主阶段",
+    BeginCombat: "战斗开始步骤",
+    DeclareAttackers: "宣告攻击者步骤",
+    DeclareBlockers: "宣告阻挡者步骤",
+    CombatDamage: "战斗伤害步骤",
+    EndCombat: "战斗结束步骤",
+    PostCombatMain: "战斗后主阶段",
+    End: "结束步骤",
+    Cleanup: "净化步骤",
+  };
+
+  /**
+   * 容器识别表。`kind` 对应一条定位规则：
+   *
+   *   combat   战斗条（有 data-combat-phase-indicator）：源码顺序即 5 个战斗步骤
+   *   hud      玩家 HUD 里的左右两条：3 个一组与 2 个一组，靠**组内数量**区分，
+   *            因为它们的 class 完全相同、只差渲染顺序
+   *   mobile   手机端 Chip 与其操作行合并后的祖先容器
+   *   sheet    阶段停止抽屉（12 个一组）
+   *
+   * 每条规则回答「这个图标是本组第几个」→ 阶段名。返回 null 表示这个容器不认识，
+   * 宁可放过也不猜错——猜错会把某个阶段的图标画到另一个阶段上。
+   */
+  /**
+   * 这个组里所有阶段图标，**按源码顺序**。已替换的和还没替换的都要算进去。
+   *
+   * 两边的并集是必须的：替换会把 viewBox 改成 24 网格，只查 ICON_SELECTOR 的话，
+   * 同一个组里已经换过的图标就不见了，后面图标的序号会整体前移。
+   */
+  function groupFans(groupElement) {
+    return Array.from(groupElement.querySelectorAll(`${ICON_SELECTOR}, ${PATCHED_ICON_SELECTOR}`));
+  }
+
+  /**
+   * 从 button 往上找那个「装着整组阶段图标」的容器。
+   *
+   * 不能直接取 `button.parentElement`：阶段停止抽屉里 button 的父节点是 `<li>`
+   * （`MobilePhaseChip.tsx` 的 PhaseStopRow 是 li > button > span > svg），一个
+   * `<li>` 里只有一个图标，序号永远是 0，整组会认错。所以往上走到第一个含 ≥2 个
+   * 阶段图标的祖先为止。
+   *
+   * **必须在 `<body>` 之前停下。** 一直往上走会走到 `<html>`，那里的图标来自整份
+   * 文档——拿它当一组的话，任意一个不认识的容器都会被「全文档的第 N 个」认走，
+   * 正是这个函数要避免的误判。走不到就返回 null，宁可放过。
+   */
+  function groupContainer(button) {
+    let node = button.parentElement;
+    while (node && node !== document.documentElement && node !== document.body) {
+      if (groupFans(node).length >= 2) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * 按「容器 + 组内序号」定阶段。
+   *
+   * 四种容器，四种判据。共同点是**都只用结构**，不读文案：
+   *
+   *   data-combat-phase-indicator   战斗条，5 个，顺序写死在 COMBAT_PHASES
+   *   组内 3 个                      玩家 HUD 左条（Upkeep / Draw / Main1）
+   *   组内 2 个                      玩家 HUD 右条（Main2 / End）
+   *   12 个一组                      手机操作行与阶段抽屉，按 CR 500.1 全序列
+   *
+   * 除这四条之外**不加兜底规则**。组内数量是前两条仅有的区分依据，加一条「默认按
+   * 全序列」的兜底就会让不认识的容器也有结论——实测过一个 4 个按钮的容器因此被
+   * 认走了 3 个。认不出来就返回 null，让原版图标留着。
+   */
+  function phaseByGroup(groupElement, icon) {
+    const fans = groupFans(groupElement);
+    const index = fans.indexOf(icon);
+    if (index < 0) return null;
+
+    if (groupElement.hasAttribute("data-combat-phase-indicator")) {
+      return ["BeginCombat", "DeclareAttackers", "DeclareBlockers", "CombatDamage", "EndCombat"][index] ?? null;
+    }
+
+    // 手机端操作行：chip + 12 个停止按钮挤在同一个祖先里，所以这个容器会同时
+    // 包含 chip 的图标和整行。组内第一个带 8 半径的圆时就是「重置」——整个界面
+    // 只有它长这样，拿它当锚点比数「刚好 12 个」更不容易被上游改动带坏。
+    if (index === 0 && icon.querySelector('circle[r="8"]')) return "Untap";
+
+    // 12 个一组的剩下两种：阶段停止抽屉，以及手机操作行里那 12 个。
+    // 不校验数量——抽屉开着的时候，行本身只会多不会少。
+    if (index < PHASES.length && (groupElement.closest('[role="dialog"]') || fans.length === PHASES.length)) {
+      return PHASES[index];
+    }
+
+    if (fans.length === 3) return ["Upkeep", "Draw", "PreCombatMain"][index] ?? null;
+    if (fans.length === 2) return ["PostCombatMain", "End"][index] ?? null;
+    return null;
+  }
+
+  /**
+   * 从 button 的 aria-label 里认阶段：描述文案必须**完整**出现在标签里。
+   *
+   * 这里刻意不做「只看末尾 N 个字符」的截断。最初写成 `label.slice(-40)` 是个 bug：
+   * 描述文案长短不一（`维持触发式异能与周期性费用在此发生。` 比 `你在此抓本回合的
+   * 牌。` 长出不少），加上标签前缀之后短描述留在窗口内、长描述被截掉，于是只有
+   * 一部分阶段能校验上——而且失败得毫无规律。
+   *
+   * 完整包含 + 唯一命中就够了：12 条描述互不包含，而 `getPhaseTooltip` 的产物里
+   * 必然带完整描述。
+   *
+   * **只在 Chip 上用**，不当作结构判据失败时的兜底。理由是实测教训：把文案当兜底
+   * 之后，一个「四个按钮、谁也不认识」的容器会被文案认走三个——而认错的代价是把
+   * 某个阶段的图标画到另一个阶段上，比不换糟得多。结构判据认识才动手。
+   */
+  function phaseByText(button) {
+    const label = button && button.getAttribute && button.getAttribute("aria-label");
+    if (!label) return null;
+    let found = null;
+    for (const phase of PHASES) {
+      if (!label.includes(PHASE_TEXT[phase])) continue;
+      if (found !== null) return null; // 命中两条说明表本身有问题，放弃
+      found = phase;
+    }
+    return found;
+  }
+
+  /**
+   * 手机端 Chip（`MobilePhaseChip.tsx`）：它是**唯一**自己带 aria-label 的阶段图标。
+   *
+   * 它认自己靠的是 `aria-haspopup="dialog"` 这个结构特征，而不是「看看文案像不像」
+   * ——没有这个特征就不认，所以不会误伤别的容器。认出来之后才用文案表定阶段，
+   * 表的份额由 `phaseStop.chipAria`（`phaseName.<Phase>`）决定。
+   */
+  function phaseByChip(button) {
+    if (button.getAttribute("aria-haspopup") !== "dialog") return null;
+    const label = button.getAttribute("aria-label");
+    if (!label) return null;
+    for (const phase of PHASES) {
+      if (label.startsWith(`当前阶段：${PHASE_NAME[phase]}`)) return phase;
+    }
+    return null;
+  }
+
+  /**
+   * 对一个候选 SVG 判定阶段。返回阶段名或 null。
+   *
+   * 结构判据（容器 + 组内序号）是唯一会动手的依据；文案只在两种情况下参与：
+   * Chip 自己认自己，以及结构判据有结论时做交叉校验。找不到就返回 null——
+   * 阶段图标认错比不换更糟。
+   */
+  function identifyPhase(icon) {
+    const button = icon.closest("button");
+    if (!button) return null;
+
+    const byChip = phaseByChip(button);
+    if (byChip !== null) return byChip;
+
+    const group = groupContainer(button);
+    if (!group) return null;
+
+    const byPlace = phaseByGroup(group, icon);
+    if (byPlace === null) return null;
+
+    // 有结论之后再拿文案校对一次：这里只报警不动手。上游改了措辞或改了阶段顺序
+    // 时，这条警告就是最先冒出来的信号。
+    const byText = phaseByText(button);
+    if (byText !== null && byText !== byPlace && debug()) {
+      console.warn(`[phase-rs-zh] 阶段图标的结构判据与文案判据不一致：位置=${byPlace} 文案=${byText}`);
+    }
+    return byPlace;
+  }
+
+  /** 这个阶段的名字（用于排障输出）。 */
+  function phaseSource(phase) {
+    return PHASE_ICON_SOURCE[phase] ?? "?";
+  }
+
+  /**
+   * 给一批图标**先**定好阶段，返回 `Map<svg, phase>`。
+   *
+   * 必须先算完再动手，这是踩过的坑：`patchIcon` 会把 viewBox 改成 24 网格，于是
+   * 刚换过的图标从 `svg[viewBox="0 0 14 14"]` 里消失。如果一边替换一边重新查询，
+   * 同组里第二个图标的序号会从 1 变成 0、组的长度从 3 变成 2，整组认错——而且只
+   * 错一部分，看起来像是「随机有几个没换」。
+   *
+   * 所以识别是**对当时的 DOM 快照**一次性完成的，替换只是照着结果执行。
+   */
+  function resolvePhases(candidates) {
+    const planned = new Map();
+    for (const icon of candidates) {
+      if (!isUnpatchedIcon(icon)) continue; // 已处理的直接跳过，这个入口可能被单独调用
+      try {
+        const phase = identifyPhase(icon);
+        if (phase !== null) planned.set(icon, phase);
+      } catch (error) {
+        // 一个图标认不出来不该影响别的。
+        if (debug()) console.warn("[phase-rs-zh] 阶段图标识别失败", error);
+      }
+    }
+    return planned;
+  }
+
+  function scanPhaseIcons() {
+    const candidates = Array.from(document.querySelectorAll(ICON_SELECTOR)).filter(isUnpatchedIcon);
+    const planned = resolvePhases(candidates);
+    for (const [icon, phase] of planned) {
+      try {
+        if (!icon.isConnected) continue; // 识别到替换之间被卸载了
+        patchIcon(icon, phase);
+        // 标记留到最后打：它是「已处理」的凭据，中途抛错就不该留下它。
+        icon.setAttribute("data-prz", phase);
+      } catch (error) {
+        if (debug()) console.warn("[phase-rs-zh] 阶段图标替换失败", error);
+      }
+    }
+  }
+
+  /**
+   * 阶段图标的 MutationObserver。
+   *
+   * **刻意不和卡图的 observe() 合并。** 那个观察器挂的是 attributes + src/srcset，
+   * 语义是「属性变了就重写 URL」；这边只需要 childList。两种语义混在一个回调里
+   * 会让两边都变难读，而它们本来就是两件不相干的事。
+   *
+   * 只在 childList 上触发的原因：patchIcon 改的是属性，属性变化不会回调到这里，
+   * 所以天然没有「自己触发自己」的路径。`data-prz` 标记是第二道闸，防的是同一
+   * 节点被反复处理。
+   */
+  function observePhaseIcons() {
+    const root = document.documentElement;
+    if (!root || typeof MutationObserver !== "function") return;
+    const observer = new MutationObserver((records) => {
+      let relevant = false;
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (node instanceof SVGElement && isUnpatchedIcon(node)) { relevant = true; break; }
+          // 新挂进来的可能是一整棵子树（比如组件卸载重建、抽屉打开），
+          // 里面照样可能有阶段图标。
+          if (node instanceof Element && node.querySelector(ICON_SELECTOR)) { relevant = true; break; }
+        }
+        if (relevant) break;
+      }
+      if (!relevant) return;
+      // 走整轮扫描而不是只处理那一个节点：识别依赖「组里有几个图标」，而组里的
+      // 其它成员可能刚好也在这一批记录里。整轮扫描一次批次只做一次。
+      scanPhaseIcons();
+    });
+    observer.observe(root, { subtree: true, childList: true });
+  }
+
   /**
    * 装配。必须在同一文档里幂等。
    *
@@ -792,11 +1253,17 @@
    * 一级，中文图直接跳过英文层掉到 Scryfall 兜底——正好破坏了阶梯存在的意义。
    * 扩展载体下浏览器只注入一次；但这条闸对两种载体都成立，没有理由不加。
    *
-   * 重复进入时仍跑一次 `scan()`：把上次点击之后新渲染出来的图补上。
+   * 重复进入时仍跑一次两套扫描：把上次点击之后新渲染出来的图和图标补上。
+   *
+   * **两套逻辑共用这一道幂等闸，但装配的东西互不相干：** 卡图挂的是原型补丁的
+   * attributes 观察器与 window error 监听，阶段图标挂的是自己的 childList 观察器。
+   * 共用闸门是对的——重复点击时两边都不该再挂第二份监听；而每次补扫描则对两边
+   * 都成立。
    */
   function install() {
     if (globalThis.__phaseZhCardArtInstalled === true) {
-      scan();
+      scanCardImages();
+      scanPhaseIcons();
       return;
     }
     globalThis.__phaseZhCardArtInstalled = true;
@@ -810,15 +1277,23 @@
     )));
     patchSetAttribute();
     observe();
+    observePhaseIcons();
     window.addEventListener("error", onResourceError, true);
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", scan, { once: true });
+      document.addEventListener("DOMContentLoaded", () => {
+        scanCardImages();
+        scanPhaseIcons();
+      }, { once: true });
     } else {
-      scan();
+      scanCardImages();
+      scanPhaseIcons();
     }
     // 从 bfcache 回来时页面可能被浏览器整体恢复过一遍，补一次扫描，
-    // 代价只是一次 querySelectorAll。
-    window.addEventListener("pageshow", scan);
+    // 代价只是一次 querySelectorAll 加一次图标扫描。
+    window.addEventListener("pageshow", () => {
+      scanCardImages();
+      scanPhaseIcons();
+    });
     console.info(`[phase-rs-zh] 已启用 v${VERSION}`);
   }
 
@@ -850,6 +1325,31 @@
       probeCache.clear();
       probePending.clear();
     },
+  };
+
+  // 阶段图标那一半的诊断入口。刻意与上面那个对象分开：两套逻辑除了共用幂等闸，
+  // 没有任何共享状态，各自的测试入口也各归各。
+  globalThis.__phaseZhPhaseIcons = {
+    phases: PHASES,
+    iconSource: PHASE_ICON_SOURCE,
+    text: PHASE_TEXT,
+    badge: PHASE_BADGE,
+    selector: ICON_SELECTOR,
+    viewBox: ICON_VIEW_BOX,
+    scale: ICON_SCALE,
+    badgeMarkup,
+    patchIcon,
+    originalSvgAttrs,
+    isUnpatchedIcon,
+    groupFans,
+    groupContainer,
+    phaseByGroup,
+    phaseByText,
+    phaseByChip,
+    phaseName: PHASE_NAME,
+    identifyPhase,
+    resolvePhases,
+    scanPhaseIcons,
   };
 
   // 脱离 DOM 加载（Node 单测）时只暴露上面的纯函数，不装配。

@@ -118,6 +118,107 @@ fetch、被 CSP 拦、5xx、超时）→ 按存在处理，重试一次再降级
 另外，重复点击书签不能让同一张图降两级（两个 error 监听各降一级就会跳过英文层），
 所以装配带一道幂等闸；重复点击只会重新扫一遍页面。
 
+## 阶段图标替换
+
+除了卡图，脚本还把回合阶段栏的 **12 个内联 SVG 图标**换成公开图标库的图形。
+
+### 图形从哪来
+
+**不自己画。** 12 个图标全部取自两个宽松许可的图标库：
+
+| 库 | 许可 | 用了哪些 |
+| --- | --- | --- |
+| [Lucide](https://lucide.dev) | ISC | settings / swords / sword / shield / zap / flag / hourglass / broom |
+| [Tabler Icons](https://tabler.io/icons) | MIT | rotate-clockwise / play-card / target |
+
+ISC 与 MIT 都可以随本仓库（MIT）一起再分发，所以 `LICENSE` 不需要为图标加任何例外。
+
+**刻意不用 Apple 的 SF Symbols**：它的许可把使用范围限定在「运行于 Apple 系统上的
+App」，网页不在内，而本项目允许别人再分发——把它塞进来就得在 README 里写一段自己
+没有资格授予的限制。
+
+### 12 个图标的对应关系
+
+| 阶段 | 图形 | 出处 |
+| --- | --- | --- |
+| 重置 Untap | 顺时针环形箭头 | `tabler/rotate-clockwise` |
+| 维持 Upkeep | 齿轮 | `lucide/settings` |
+| 抓牌 Draw | 卡牌 | `tabler/play-card` |
+| 第一主阶段 | 同心圆 **+ 角标 1** | `tabler/target` |
+| 战斗开始 | 交叉双剑 | `lucide/swords` |
+| 宣告攻击者 | 单手剑 | `lucide/sword` |
+| 宣告阻挡者 | 盾牌 | `lucide/shield` |
+| 战斗伤害 | 闪电 | `lucide/zap` |
+| 战斗结束 | 旗帜 | `lucide/flag` |
+| 第二主阶段 | 同心圆 **+ 角标 2** | `tabler/target` |
+| 结束步骤 | 沙漏 | `lucide/hourglass` |
+| 清理 Cleanup | 扫帚 | `lucide/broom` |
+
+顺带修掉了原版的两处重复：`PreCombatMain` 与 `PostCombatMain` 原本是**同一个菱形**，
+`BeginCombat` 与 `CombatDamage` 原本都是交叉双剑（只差中心一个圆点）。
+
+### 怎么认出每个 SVG 是哪个阶段
+
+12 个里有**两组图形完全相同**，所以光看 SVG 内容分不出来。第一层判据是**结构**：
+
+| 容器 | 判据 | 对应 |
+| --- | --- | --- |
+| `[data-combat-phase-indicator]` | 5 个，源码顺序 | `COMBAT_PHASES` |
+| 组内 3 个 | 玩家 HUD 左条 | Upkeep / Draw / PreCombatMain |
+| 组内 2 个 | 玩家 HUD 右条 | PostCombatMain / End |
+| 12 个一组 | 手机操作行与阶段抽屉 | `ALL_PHASES`（CR 500.1 全序列） |
+
+结构判据不读任何文案，所以换成英文界面照样工作。第二层用 `aria-label` 里的描述文案
+做**交叉校验**，只在结构判据已经有结论时打个警告，不参与定位——上游改了顺序或措辞时
+这条警告就是最先冒出来的信号。
+
+手机端 Chip 是唯一的例外：它是唯一自带 `aria-haspopup="dialog"` 的阶段图标，先靠这个
+结构特征认出「这是 Chip」，再用 `phaseName` 表定阶段。
+
+**认不出来就不动。** 没有兜底规则：一个 4 个按钮的容器实测会被「默认按全序列」认走 3 个，
+而把某个阶段的图标画到另一个阶段上比不换糟得多。
+
+### 为什么不用 MutationObserver 硬扛重渲染
+
+React 重渲染其实**很少**碰这些图标，实测依据来自源码：
+
+- `PHASE_ICONS` 是模块级常量，每次渲染返回的是**同一个 React element 对象引用**。
+  React 在 reconcile 时遇到 `prevChild === nextChild` 会直接 bailout，不生成任何 patch。
+- 就算不 bailout，React 也只增删改它自己管的属性（`class`、`d`…），不会清空整个元素，
+  所以我们贴的 `data-prz` 与换过的子节点都不受影响。
+- 桌面端最常看的 5 个图标在 `GamePage.tsx` 里被 `useMemo(() => <PlayerHud />, [])` 固定住，
+  DOM 一次挂载后不再重建。
+
+真正会丢的只有「组件卸载后重建」这几种（横竖屏切 `CombatPhaseIndicator`、开局时
+`MobilePhaseChip` 从 null 变有、打开阶段停止抽屉）。所以 `MutationObserver` 只当**兜底**：
+监听 `childList`，发现没打过标记的阶段图标就补一次扫描。它**不和卡图那个观察器合并**——
+那个挂的是 `attributes` + `src`/`srcset`，两种语义混在一个回调里会让两边都变难读。
+
+`data-prz` 标记同时是防死循环的闸：我们的写入会再次触发观察器，认标记就不会无限循环。
+
+### 角标为什么画在 SVG 内部
+
+`PhaseDot` 的 button 有 4 个子节点（激活条 / 图标 / 停止点 / tooltip 锚点），都是 React
+管的。往里塞第五个节点会参与 React 的子节点协调；角标画进 SVG 内部就完全没这个问题，
+因为 SVG 的子树是我们整体替换的。
+
+位置在**右上角**而不是右下角：停止点的圆在正下方中央（`-bottom-0.5 left-1/2`），右下角
+会和它挤在一起。右上角只有「当前阶段」的琥珀色小条，而它在正上方中央，两者错得开。
+
+代价要说清楚：**手机端图标本身只有 10px**（`MobilePhaseChip.tsx` 里
+`[&>svg]:h-3` 覆盖了尺寸类，未激活时是 `h-2.5`），此时角标圆只有约 1 个屏幕像素高，
+「1」和「2」读不出来——角标传达的是「这是主阶段」，具体是第几个要看中文标签。桌面端
+14px 下可以辨认。这是「角标 + 10px 图标」这个组合的物理下限，不是实现取舍。
+
+### 和卡图逻辑的关系
+
+两者**操作对象完全不相交**：卡图改 `HTMLImageElement` 的 `src`/`srcset`，图标换
+`SVGSVGElement` 的子节点。观察器各挂各的（一个 `attributes`，一个 `childList`），
+补丁各打各的，谁也唤不醒谁。
+
+唯一共用的是幂等闸 `__phaseZhCardArtInstalled`：重复点击书签时两边都不该再挂第二份监听，
+而「补一次扫描」对两边都成立。
+
 ## phase.rs 更新了怎么办
 
 **通常什么都不用做。** 这个工具依赖的是四个「外部契约」，都不是 phase.rs 的内部实现：
@@ -233,6 +334,15 @@ sudo chown -R $(id -u):$(id -g) ~/.npm # 或者根治那个缓存目录的属主
 6. 连点两次书签：不应有任何异常（幂等）。
 7. 设 `__phaseZhCardArtDebug = true` 后反复翻牌组：控制台只应在**真的缺中文图**时打印
    「降级」；若某张牌反复打印「原地重试」然后仍是英文，说明图床那天确实不稳定。
+8. **阶段图标**：点完书签后，头像两侧与右侧战斗条上的 12 个图标都应换成新图形。原版的
+   太阳 / 水滴 / 菱形 / 沙漏 / 小人一律不该再出现。
+9. 两个主阶段（左右各一个同心圆）应带角标 1 与 2，且角标在**右上角**；若某个阶段设了
+   停止点，中下方的黄点应当和角标互不重叠。
+10. 在阶段栏上悬停、点击切换：图标应随状态变色（未激活灰、悬停变白、激活纯白）——
+    和原版行为一致。若颜色不跟随，说明 `stroke/fill="currentColor"` 被破坏了。
+11. 窗口高度跨越断点（拉窄到横屏手机尺寸）让战斗条隐藏再出现：图标应当自动补上，
+    不应退回原版图形。这一条验的是 MutationObserver 兜底。
+12. 手机尺寸下打开阶段停止抽屉（点头部的阶段胶囊）：抽屉里 12 行的图标也应是新图形。
 
 ## 已知限制
 
@@ -280,6 +390,15 @@ URL** 发一次 `Range: bytes=0-0` 的 `fetch`，只为读状态码（404 = 这�
 「随便用/改/再发，只要保留版权声明」就够了；而且 phase.rs 本身是 `MIT / Apache-2.0`
 双许可，同向选 MIT 不会有将来合并回上游的许可障碍（Apache-2.0 多出的专利条款是给大
 项目用的，这里属于多余复杂度）。
+
+**阶段图标跟着 MIT 走**，因为它们的来源同样是宽松许可：
+
+- 描边式图标来自 **[Lucide](https://lucide.dev)**（ISC 许可）与
+  **[Tabler Icons](https://tabler.io/icons)**（MIT 许可）。两者都允许再分发，所以
+  12 个图形可以随本仓库一起以 MIT 分发，`LICENSE` 不需要加例外条款。
+- **刻意没用 Apple 的 SF Symbols**：它的许可把使用范围限定为「运行在 Apple 系统上的
+  App」，网页不在内。要用就得在 README 里写一段限制，而那段限制本仓库没有资格授予
+  （不是 Apple，无权转授权）。
 
 **卡图不在这份许可范围内**，它们各有归属：
 
@@ -331,8 +450,10 @@ phase-rs-zh/
 │   ├── index.html                          GitHub Pages 入口，与 dist/install.html 逐字节相同
 │   └── .nojekyll                           让 Pages 跳过 Jekyll 处理
 ├── test/
-│   ├── content.test.mjs                    零依赖：纯逻辑 + 产物同源/等价校验
-│   └── assembly.dom.mjs                    DOM 装配测试（vitest + happy-dom）
+│   ├── content.test.mjs                    零依赖：卡图纯逻辑 + 产物同源/等价校验
+│   ├── phase-icons.test.mjs                零依赖：图标数据、角标几何、绘制指令
+│   ├── assembly.dom.mjs                    DOM 装配测试：卡图（vitest + happy-dom）
+│   └── phase-icons.dom.mjs                 DOM 装配测试：阶段图标的识别与替换
 ├── tools/
 │   ├── build-bookmarklet.mjs               从 src/content.js 生成上面那些产物
 │   ├── check-live.mjs                      对真实图床核对三级阶梯
@@ -359,6 +480,8 @@ phase-rs-zh/
 | 一部分卡是英文 | 正常：大学院废墟没有这些印刷的中文图，已按设计降到英文层。 |
 | 网络面板出现 404 | 正常：那是中文层的判据，紧接着会降级或重试。只有持续 404 且最终裂图才是问题。 |
 | **时好时坏、同一张卡有时中文有时英文** | v1.1.0 已修。根因是图床那 4 个地址大多拒连，而旧版把「连不上」当成「没有中文图」。若在新版仍出现，`__phaseZhCardArtDebug = true` 后可在控制台看到每次是「原地重试」还是「降级」。 |
+| **阶段图标没换 / 只换了一部分** | 先确认点过书签。控制台应打印 `[phase-rs-zh] 已启用 v1.2.0`。若某个图标仍是原版，多半是它所在的容器不符合已知的四种结构（3 个 / 2 个 / 5 个战斗 / 12 个一组）——脚本对认不出来的容器**故意不动**，以免把图标画到错误的阶段上。把 `__phaseZhCardArtDebug = true` 打开可以看到结构判据与文案判据不一致的警告。 |
+| **阶段图标没换，但提示结构判据冲突** | 说明 phase.rs 改了阶段顺序或文案。结构判据优先（它是源码顺序），所以图标仍然是对的；那条警告是提醒你 `PHASE_TEXT` 表该更新了。 |
 | 中文卡图旁边小图（srcset 的 146w）是英文 | 检查网络面板里 `/zhs/small/…` 的状态。若为 404，说明该印刷只有大图有中文；这是图床的事实，不是脚本的问题。 |
 
 ### 自己动手看一眼

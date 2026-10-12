@@ -271,16 +271,19 @@ describe("阶段图标：替换本身", () => {
   it("主阶段带角标，其余阶段不带", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    // 角标是一个 fill=currentColor 的圆 + 一条反色描边的数字路径
-    expect(iconOf("PreCombatMain").innerHTML).toContain('<circle cx="21.5" cy="2.5" r="2.5"');
-    expect(iconOf("PostCombatMain").innerHTML).toContain('<circle cx="21.5" cy="2.5" r="2.5"');
-    expect(iconOf("Draw").innerHTML).not.toContain('<circle cx="21.5" cy="2.5"');
+    // 角标是一个 fill=currentColor 的圆角矩形 + 一条反色描边的「M1 / M2」
+    const { x } = icons().badgeBox;
+    expect(iconOf("PreCombatMain").innerHTML).toContain(`<rect x="${x}"`);
+    expect(iconOf("PostCombatMain").innerHTML).toContain(`<rect x="${x}"`);
+    expect(iconOf("Draw").innerHTML).not.toContain(`<rect x="${x}"`);
+    // 两个字符的写法：M1 与 M2 必须不同
+    expect(iconOf("PreCombatMain").innerHTML).not.toBe(iconOf("PostCombatMain").innerHTML);
   });
 
   it("主阶段的内容整体放大过（补偿 24 网格四周的留白）", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    expect(iconOf("PreCombatMain").innerHTML).toContain("scale(1.12)");
+    expect(iconOf("PreCombatMain").innerHTML).toContain(`scale(${icons().scale})`);
   });
 
   it("兄弟节点没被动过：激活条与停止点都还在", () => {

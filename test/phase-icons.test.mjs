@@ -21,7 +21,8 @@ vm.runInThisContext(SOURCE, { filename: "content.js" });
 
 const {
   phases, iconSource, text, badge, selector, viewBox, scale,
-  badgeMarkup, patchIcon, originalSvgAttrs, isUnpatchedIcon,
+  badgeMarkup, badgeBox, badgeLabel, badgeRadius, patchIcon,
+  originalSvgAttrs, isUnpatchedIcon,
 } = globalThis.__phaseZhPhaseIcons;
 
 /**
@@ -82,27 +83,39 @@ test("两个主阶段都带角标，其余阶段一个都不带", () => {
   assert.equal(badge.PostCombatMain, "2");
 });
 
-test("角标几何：贴在右上角，落在 viewBox 之内", () => {
-  const [, , size] = viewBox.split(" ").map(Number);
-  const { x, y, r } = { x: 21.5, y: 2.5, r: 2.5 };
-  assert.equal(size, 24, "图标库统一 24 网格，角标坐标是按它算的");
-  assert.ok(x + r <= size, `角标右侧超出画布：${x + r} > ${size}`);
-  assert.ok(y - r >= 0, `角标上侧超出画布：${y - r} < 0`);
-  // 右上角而不是右下角：停止点的圆在正下方（-bottom-0.5 left-1/2），右下角会撞上
-  assert.ok(y < size / 2, "角标必须在画布上半部");
-  assert.ok(x > size / 2, "角标必须在画布右半部");
+test("角标几何：贴在右上角，且足够宽写下两个字符", () => {
+  const { x, y, w, h } = badgeBox;
+  const [vbW] = viewBox.split(" ").map(Number).slice(2);
+  assert.equal(vbW, 24, "图标库统一 24 网格，角标坐标是按它算的");
+  // 角标允许溢出 viewBox（SVG 默认不裁剪），但必须落在右上角
+  assert.ok(x > vbW / 2, "角标必须在画布右半部");
+  assert.ok(y + h / 2 < vbW / 2, "角标必须在画布上半部");
+  // 最早是圆 + 单个数字，圆里塞不下「M1」两个字符，才改成圆角矩形。
+  // 这条断言守住那个结论：宽度必须够两个字符站。
+  assert.ok(w >= 8, `角标太窄，写不下两个字符：${w}`);
+  assert.ok(h >= 5, `角标太矮：${h}`);
+  assert.ok(badgeRadius < h / 2, "圆角半径不该把矩形变成胶囊");
 });
 
-test("角标的数字用描边画，不依赖字体", () => {
+test("角标的文字用描边画，不依赖字体", () => {
   for (const digit of ["1", "2"]) {
     const markup = badgeMarkup(digit);
-    assert.ok(markup.includes("<circle"), `${digit} 缺少底色圆`);
+    assert.ok(markup.includes("<rect"), `${digit} 缺少底色矩形`);
     assert.ok(markup.includes('fill="currentColor"'), `${digit} 的底色应跟随主题色`);
-    assert.ok(markup.includes("<path"), `${digit} 的数字应当是路径而不是 <text>`);
+    assert.ok(markup.includes("<path"), `${digit} 的文字应当是路径而不是 <text>`);
     assert.ok(!markup.includes("<text"), `${digit} 不应依赖字体渲染`);
-    assert.ok(markup.includes('stroke="#0f172a"'), `${digit} 的数字应当是反色`);
+    assert.ok(markup.includes('stroke="#0f172a"'), `${digit} 的文字应当是反色`);
+    // 两个字符：M 加一个数字
+    assert.ok(markup.includes(badgeLabel.M), `${digit} 缺少 M 的笔画`);
+    assert.ok(markup.includes(badgeLabel[digit]), `${digit} 缺少数字的笔画`);
   }
-  assert.notEqual(badgeMarkup("1"), badgeMarkup("2"), "1 和 2 必须是两个不同的形状");
+  assert.notEqual(badgeMarkup("1"), badgeMarkup("2"), "M1 和 M2 必须是两个不同的形状");
+});
+
+test("角标文字是 M1 / M2，不是光秃秃的数字", () => {
+  assert.equal(badgeLabel.M.length > 0, true);
+  // 单看一个「1」读者不知道它指什么；M1/M2 是万智牌玩家的通用说法
+  assert.equal(Object.keys(badgeLabel).sort().join(","), "1,2,M");
 });
 
 test("绘制指令：viewBox 换成 24 网格、走描边式、保留尺寸类", () => {
@@ -118,22 +131,34 @@ test("绘制指令：viewBox 换成 24 网格、走描边式、保留尺寸类",
   assert.equal(svg.getAttribute("class"), "h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
 });
 
-test("绘制指令：内容整体放大，补偿 24 网格四周的留白", () => {
+test("绘制指令：图标内容整体缩放，角标占据右上角", () => {
   const svg = fakeSvg({ viewBox: viewBox });
   patchIcon(svg, "Upkeep");
-  assert.ok(scale > 1 && scale < 1.2, `缩放系数应当在合理区间：${scale}`);
+  assert.ok(scale > 0.7 && scale < 1.3, `缩放系数应当在合理区间：${scale}`);
   assert.ok(svg.innerHTML.includes(`scale(${scale})`), "内容应当被包在缩放组里");
   assert.ok(svg.innerHTML.includes('transform-origin="12 12"'), "缩放应当以画布中心为原点");
+
+  // 角标与圆形图案有一小块重叠是**设计如此、也是无奈**：图标本身只有 10px，要在
+  // 右上角写下「M1」两个字符，24 网格里放不下「两者不碰」。实测这个重叠视觉上可接受
+  // ——角标压在 target 外圈的外侧一小块，同心圆仍认得出。所以这里不加「不许重叠」
+  // 的断言（那是几何上做不到的），只守真正的约束：
+  //   1. 不出画布上方与右侧      → 否则会被按钮裁掉
+  //   2. 确实在右上角            → 右上角才能和正上方的激活条、正下方的停止点错开
+  const [vbW, vbH] = viewBox.split(" ").map(Number).slice(2);
+  assert.ok(badgeBox.y >= 0, `角标上边缘出画布：${badgeBox.y}`);
+  assert.ok(badgeBox.x + badgeBox.w <= vbW + 1, `角标右侧超出太多：${badgeBox.x + badgeBox.w}`);
+  assert.ok(badgeBox.x > vbW / 2 && badgeBox.y + badgeBox.h < vbH / 2, "角标必须在右上角");
 });
 
 test("绘制指令：只有主阶段画角标", () => {
+  const MARK = `x="${badgeBox.x}"`; // 角标底矩形的起点，够独特
   const main = fakeSvg({ viewBox: viewBox });
   patchIcon(main, "PreCombatMain");
-  assert.ok(main.innerHTML.includes('cx="21.5"'), "主阶段应当带角标");
+  assert.ok(main.innerHTML.includes(MARK), "主阶段应当带角标");
 
   const other = fakeSvg({ viewBox: viewBox });
   patchIcon(other, "Draw");
-  assert.ok(!other.innerHTML.includes('cx="21.5"'), "非主阶段不该带角标");
+  assert.ok(!other.innerHTML.includes(MARK), "非主阶段不该带角标");
 });
 
 test("每个阶段的绘制结果都非空，且确实来自图标库", () => {

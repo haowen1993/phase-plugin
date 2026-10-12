@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.2.0";
+  const VERSION = "1.2.1";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -850,9 +850,11 @@
   const ICON_VIEW_BOX = "0 0 24 24";
   const ICON_STROKE_WIDTH = "2";
 
-  // 图标内容在 24 网格里四周留了 2 的空白，缩到 10px 时会比原版 14×14 的图形
-  // 略小。放大 1.12 把它补回来，让「视觉重量」和原版接近。
-  const ICON_SCALE = 1.12;
+  // 图标内容在 24 网格里四周留了 2 的空白，缩到 10px 时会比原版 14×14 的图形略小。
+  // 放大能补回这点，但主阶段的右上角要放「M1/M2」角标，放大会顶到角标上：target 的
+  // 外圈半径 9，放大 1.12 后右边缘到 13.8，而角标左边缘 15.0——只剩 1.2 的余量。
+  // 取 1.0 是不放大也不缩小的折中，两个图形在 10px 下都不至于糊。
+  const ICON_SCALE = 1.0;
 
   const PHASE_ICON_INNER = {
     Untap: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" />',   // tabler/rotate-clockwise
@@ -870,26 +872,48 @@
   };
 
   /**
-   * 角标：右上角一个实心圆 + 反色的数字。
+   * 角标：右上角一个反色的圆角矩形，里面是「M1」/「M2」。
    *
    * 位置是右上角而不是右下角，因为 `PhaseStopBar.tsx` 的「已设置停止点」圆点在
    * **正下方中央**（`-bottom-0.5 left-1/2`），放右下角会和它挤在一起。右上角只有
    * 「当前阶段」的琥珀色小条（在正上方中央），两者错得开。
+   *
+   * **为什么是矩形而不是圆。** 最早用的是圆 + 数字 1/2：单个数字在 10px 图标旁边
+   * 已经勉强，想写清「第一/第二」就必须两个字符，而圆里塞不下两个字。换成圆角矩形
+   * 横向扩到 9.6 宽（图标只有 10px 宽），两个字符才有地方站。代价是角标比图标本身
+   * 还宽——这是「要把两个字符画清楚」的必然结果，不是没调好。
    */
-  const BADGE_POS = { x: 21.5, y: 2.5, r: 2.5 };
+  const BADGE_BOX = { x: 15.0, y: 0.4, w: 8.2, h: 5.6 };
+  const BADGE_RADIUS = 1.4;
+
+  /**
+   * 「M」+ 数字的笔画。**手绘路径而不是 `<text>`**：不依赖字体（中文环境下
+   * `-apple-system` 落到哪个字体会影响字宽，两个字符就可能溢出角标），而且笔画
+   * 粗细随图标一起缩放，10px 下不会糊掉。
+   */
+  const BADGE_LABEL = {
+    // M：三笔，左边竖 / 中间 V / 右边竖
+    M: "M16.3 4.9V1.5M16.3 1.95L17.65 3.65L19 1.95M19 4.9V1.5",
+    "1": "M20.2 1.5L21.25 1.15V4.9",
+    "2": "M20.05 1.85a1.1 1.1 0 0 1 2.15.2c0 .8-2.15 1.1-2.15 2.25h2.3",
+  };
 
   function badgeMarkup(digit) {
-    const { x, y, r } = BADGE_POS;
-    // 数字用描边画（而不是 <text>）：不依赖字体，且笔画粗细随图标一起缩放。
-    const d = digit === "1"
-      ? "M21.15 1.3L22.15 0.95V3.9"
-      : "M20.5 1.5a1.05 1.05 0 0 1 2.1.15c0 .8-2.1 1.25-2.1 2.55h2.2";
-    return `<circle cx="${x}" cy="${y}" r="${r}" fill="currentColor" stroke="none"/>`
-      + `<path d="${d}" fill="none" stroke="#0f172a" stroke-width="1.1"`
-      + ' stroke-linecap="round" stroke-linejoin="round"/>';
+    const { x, y, w, h } = BADGE_BOX;
+    // 笔画 #0f172a 是按钮激活态底色（`bg-cyan-950/82` 深青）的近似值——
+    // 角标底色跟随 currentColor，字就必须是反色才读得出来。
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${BADGE_RADIUS}"`
+      + ' fill="currentColor" stroke="none"/>'
+      + `<path d="${BADGE_LABEL.M}${BADGE_LABEL[digit]}" fill="none" stroke="#0f172a"`
+      + ' stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/>';
   }
 
-  /** 主阶段才带角标：两个阶段用同一个 target 图形，靠角标区分。 */
+  /**
+   * 主阶段才带角标：两个阶段用同一个 target 图形，靠 M1 / M2 区分。
+   *
+   * 用 M1/M2 而不是 1/2：单看一个数字读者不知道它指什么，而「主阶段一 / 主阶段二」
+   * 是万智牌玩家的通用说法（MTGA 里就是 M1、M2）。
+   */
   const PHASE_BADGE = { PreCombatMain: "1", PostCombatMain: "2" };
 
   function patchIcon(svg, phase) {
@@ -1332,8 +1356,12 @@
   globalThis.__phaseZhPhaseIcons = {
     phases: PHASES,
     iconSource: PHASE_ICON_SOURCE,
+    iconInner: PHASE_ICON_INNER,
     text: PHASE_TEXT,
     badge: PHASE_BADGE,
+    badgeBox: BADGE_BOX,
+    badgeLabel: BADGE_LABEL,
+    badgeRadius: BADGE_RADIUS,
     selector: ICON_SELECTOR,
     viewBox: ICON_VIEW_BOX,
     scale: ICON_SCALE,

@@ -20,8 +20,8 @@ const SOURCE = readFileSync(new URL("../src/content.js", import.meta.url), "utf8
 vm.runInThisContext(SOURCE, { filename: "content.js" });
 
 const {
-  phases, iconSource, text, badge, selector, viewBox, scale,
-  badgeMarkup, monogramBox, monogramGlyph, patchIcon,
+  phases, iconSource, text, badge, selector, viewBox, zoom,
+  badgeMarkup, monogramGlyph, patchIcon,
   originalSvgAttrs, isUnpatchedIcon,
 } = globalThis.__phaseZhPhaseIcons;
 
@@ -83,33 +83,17 @@ test("只有两个主阶段是 M1 / M2 字形，其余阶段照旧用图标库�
   assert.equal(badge.PostCombatMain, "2");
 });
 
-test("M1/M2 字形：圆角矩形 + 字，整块占满图标位、居中、不出画布", () => {
-  const { x, y, w, h, r } = monogramBox;
+test("M1/M2 字形：没有方框，占满画布、居中、端点不出画布", () => {
   const [vbW, vbH] = viewBox.split(" ").map(Number).slice(2);
   assert.equal(vbW, 24, "图标库统一 24 网格，字形坐标是按它算的");
 
-  // 这是**整个图标**，不是挂在某个图形角上的小角标——所以它要占满图标位并居中。
-  // 早两版都是「target 同心圆 + 角上挂一个小标签」，那既让两个主阶段看起来仍是
-  // 同一个图案，也在 10px 里塞不下。现在没有别的图形要避让。
-  assert.ok(w >= 12, `字形太窄，两个字符站不下：${w}`);
-  assert.equal(x + w / 2, vbW / 2, "字形应当水平居中");
-  assert.equal(y + h / 2, vbH / 2, "字形应当垂直居中");
-  assert.ok(x >= 0 && y >= 0 && x + w <= vbW && y + h <= vbH, "字形不该超出画布");
-  assert.ok(r > 0 && r < h / 2, "圆角半径应当在「有圆角」与「不是胶囊」之间");
+  // 这是**整个图标**：不带方框，直接是两个字。前两版都不对——先是「圆 + 数字」，
+  // 后是「target 同心圆 + 角上挂一个小标签」，后者既让两个主阶段看起来仍是同一个
+  // 图案，也在 10px 里塞不下。现在没有别的图形要避让，字就该画大。
+  assert.ok(!badgeMarkup("1").includes("<rect"), "不该再有方框");
+  assert.ok(!badgeMarkup("1").includes("<circle"), "不该再有圆形");
 
-  // 字要真的落在框里，不能顶出去。
-  //
-  // **不能用字符串模式去核对坐标。** 这里连踩三坑，全是同一个根因：
-  //   1. `2.55.25` 是两个紧贴的数（2.55 与 0.25），第二个省略了前导零；而
-  //      `c0 .95` 里的 0 与 .95 是两个独立的数。判据是「两段之间有没有空白」。
-  //   2. 圆弧（`a`）的参数里，只有末两个数是终点坐标，前面还有半径、旋转、flag。
-  //   3. **小写命令是相对坐标**。`a1.3 1.3 0 0 1 2.6.3` 的终点是「当前点 + (2.6, 0.3)」，
-  //      不是绝对 (2.6, 0.3)。把它当绝对坐标比，会得出「2 画到画布外面去了」这种
-  //      假结论——而真结论要靠追踪当前点才拿得到。
-  //
-  // 所以这里老老实实写一个最小的路径遍历器，按 SVG 语义追踪当前点，输出每段的
-  // 起点与终点。判据只有一条：所有端点都必须在字形框内。
-  const bounds = { x1: x, x2: x + w, y1: y, y2: y + h };
+  const bounds = { x1: 0, x2: vbW, y1: 0, y2: vbH };
   const inBox = (px, py) => px > bounds.x1 && px < bounds.x2 && py > bounds.y1 && py < bounds.y2;
 
   /** 把 path 拆成 [命令字母, 数字数组] 列表（处理紧贴小数的合并）。 */
@@ -186,20 +170,21 @@ test("M1/M2 字形：圆角矩形 + 字，整块占满图标位、居中、不�
     assert.ok(list.length > 0, `${name} 的路径解析不出任何线段`);
     for (const [[sx, sy], [ex, ey]] of list) {
       // 每条线段的**终点**都是真正的笔画端点，必须在框里。
-      assert.ok(inBox(ex, ey), `${name}: 线段终点 (${ex}, ${ey}) 超出字形框`);
+      assert.ok(inBox(ex, ey), `${name}: 线段终点 (${ex}, ${ey}) 超出画布`);
       // 起点只有画出来的那部分才算数：路径开头那个 `M` 是「把笔挪过去」，它从
       // (0,0) 起跳，那不是笔画。
       if (!(sx === 0 && sy === 0)) {
-        assert.ok(inBox(sx, sy), `${name}: 线段起点 (${sx}, ${sy}) 超出字形框`);
+        assert.ok(inBox(sx, sy), `${name}: 线段起点 (${sx}, ${sy}) 超出画布`);
       }
     }
   }
 });
 
-test("M1/M2 的字用描边画，不依赖字体", () => {
+test("M1/M2 的字用描边画，不依赖字体，且不带任何外框", () => {
   for (const digit of ["1", "2"]) {
     const markup = badgeMarkup(digit);
-    assert.ok(markup.includes("<rect"), `${digit} 缺少圆角矩形`);
+    assert.ok(!markup.includes("<rect"), `${digit} 不该有方框`);
+    assert.ok(!markup.includes("<circle"), `${digit} 不该有圆形`);
     assert.ok(markup.includes("<path"), `${digit} 的字应当是路径而不是 <text>`);
     assert.ok(!markup.includes("<text"), `${digit} 不应依赖字体渲染`);
     // 描边式而不是实心底：另外 10 个图标都是描边式，实心块会格格不入
@@ -229,21 +214,28 @@ test("绘制指令：viewBox 换成 24 网格、走描边式、保留尺寸类",
   assert.equal(svg.getAttribute("class"), "h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
 });
 
-test("绘制指令：图标内容整体缩放（M1/M2 不走这条路）", () => {
+test("绘制指令：非主阶段图标放大 1.15 倍，且放大是绕画布中心做的", () => {
   const svg = fakeSvg({ viewBox: viewBox });
   patchIcon(svg, "Upkeep");
-  assert.ok(scale > 0.7 && scale < 1.3, `缩放系数应当在合理区间：${scale}`);
-  assert.ok(svg.innerHTML.includes(`scale(${scale})`), "内容应当被包在缩放组里");
-  assert.ok(svg.innerHTML.includes('transform-origin="12 12"'), "缩放应当以画布中心为原点");
+  assert.ok(zoom > 1 && zoom < 1.3, `放大系数应当在合理区间：${zoom}`);
+  // 绕 (12,12) 缩放：图标库的内容本来就以这里为中心，不绕中心放大会把图形挤出画布
+  assert.ok(
+    svg.innerHTML.includes(`translate(12 12) scale(${zoom}) translate(-12 -12)`),
+    "内容应当绕画布中心放大",
+  );
 
-  // 主阶段整块就是字形，不需要缩放（坐标本来就是按 24 网格算的）
+  // 主阶段整块是字形，坐标已按 24 网格画满，不再需要放大
   const main = fakeSvg({ viewBox: viewBox });
   patchIcon(main, "PreCombatMain");
-  assert.ok(!main.innerHTML.includes("scale("), "M1/M2 不该再套一层缩放");
+  assert.ok(!main.innerHTML.includes("scale("), "M1/M2 不该再套一层放大");
+
+  // 画布尺寸没变——改的是内容，不是 viewBox。收窄 viewBox 会矩形裁切，
+  // 把圆形图标的两端切掉（实测过），所以那条路走不通。
+  assert.equal(svg.getAttribute("viewBox"), "0 0 24 24");
 });
 
 test("绘制指令：只有主阶段画角标", () => {
-  const MARK = `x="${monogramBox.x}"`; // 圆角矩形的起点，够独特
+  const MARK = monogramGlyph.M; // M 的笔画，够独特
   const main = fakeSvg({ viewBox: viewBox });
   patchIcon(main, "PreCombatMain");
   assert.ok(main.innerHTML.includes(MARK), "主阶段应当带角标");

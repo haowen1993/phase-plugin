@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.2.2";
+  const VERSION = "1.3.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -850,11 +850,27 @@
   const ICON_VIEW_BOX = "0 0 24 24";
   const ICON_STROKE_WIDTH = "2";
 
-  // 图标内容在 24 网格里四周留了 2 的空白，缩到 10px 时会比原版 14×14 的图形略小，
-  // 原来的 1.12 是用来补回这一点的。挂过一轮右上角角标，那时必须收到 1.0 才不撞；
-  // 现在两个主阶段整块换成了「M1/M2」，没有角标要避让，但 1.0 已经验证过 10px 下
-  // 十个图标都清楚，就不来回折腾了。
-  const ICON_SCALE = 1.0;
+  /**
+   * 内容整体放大 1.15 倍，绕画布中心。
+   *
+   * 图标库在 24 网格四周各留了约 2 的空白，缩到 10px 时图形只占约 8.3px，比原版
+   * 14×14 的图标显得轻。放大 1.15 把它补回来。
+   *
+   * **为什么是「缩放内容」而不是「收窄 viewBox」。** 收窄 viewBox 看起来更省事，
+   * 实测两种做法都不行，都渲染对比过：
+   *   - `viewBox="0 0 20 20"`：这是**矩形裁切**四周各 2 单位。圆形图标（target 外圈
+   *     到半径 9）左右两端正好在裁切线上，会被切掉。
+   *   - 收窄 viewBox 再让内容缩小去适配：内容缩到 20 却仍摆在 24 画布里，**反而比
+   *     基准更小**（20/24 = 0.83 倍）。
+   * 缩放内容没有这两个问题：画布不动，只把内容放大。
+   *
+   * 放大按 viewBox 单位算，所以描边宽度（同样是 viewBox 单位）跟着一起变粗，正好——
+   * 图形变大而线条不变粗的话，反而会显得单薄。
+   */
+  const ICON_ZOOM = 1.15;
+
+  /** 绕 (12, 12) 缩放，图标库的内容本来就以这里为中心。 */
+  const ICON_ZOOM_TRANSFORM = `translate(12 12) scale(${ICON_ZOOM}) translate(-12 -12)`;
 
   const PHASE_ICON_INNER = {
     Untap: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" />',   // tabler/rotate-clockwise
@@ -888,32 +904,24 @@
    * `stroke="currentColor"`），实心块放进去会显得格格不入，而且实心底要配反色文字，
    * 激活变色时会多一层要照看的东西。
    */
-  const MONOGRAM_BOX = { x: 4, y: 5, w: 16, h: 14, r: 3 };
-
-  /**
-   * 「M」+ 数字的笔画。**手绘路径而不是 `<text>`**：不依赖字体——中文环境下
-   * `-apple-system` 落到哪个字体会影响字宽，两个字符就可能溢出框；手绘路径还顺带让
-   * 笔画粗细随图标一起缩放，10px 下不会糊。
-   */
+  // 字的坐标直接按 24 网格算，并且**以 (12, 12) 为中心**——它现在是整个图标，
+  // 不再需要给别的图形让位，所以按「占满大半个画布」来画：高 18、宽约 14。
+  // 两个数字的笔画宽度不同（「1」窄、「2」宽），所以各自的起笔位置不同，
+  // 但整体包围盒都居中在 (12, 12) 附近。
   const MONOGRAM_GLYPH = {
-    // M：三笔，左边竖 / 中间 V / 右边竖
-    M: "M9.1 15V9M9.1 9.9L11.05 12.4L13 9.9M13 15V9",
-    "1": "M14.8 9.3L16 8.9V15",
-    // 2：上半一个弯 + 一撇到底 + 底横。
-    // 这里踩过一次：原来写的是 `a1.3 1.3 0 0 1 2.55.25`——圆弧终点算出来是
-    // (2.55, 0.25)，落在画布左上角外面，于是「2」的上半截根本画不出来（被裁掉，
-    // 肉眼看只是觉得字有点怪）。测试里那条「笔画不出框」的断言就是抓到它的地方。
-    "2": "M14.4 10.1a1.3 1.3 0 0 1 2.6.3c0 .95-1.2 1.6-2.05 2.45L14.4 15h2.85",
+    // M 的三笔：左竖、中间 V、右竖。宽度按 8.4 定（高 18 的话，这个比例才不显得
+    // 又瘦又挤——原来按 6.2 画过，两竖之间几乎贴上）。
+    M: "M6.6 21V3M6.6 5.6L10.8 11L15 5.6M15 21V3",
+    "1": "M17.1 3.4L19.3 2.7V21",
+    "2": "M16.3 4.9a3.3 3.3 0 0 1 6.2.7c0 2.1-3.2 2.5-4.6 4.8L16.3 21H22.6",
   };
 
   /** 主阶段 → 角标里的数字。有它才画「M<n>」，否则画图标库的图形。 */
   const PHASE_BADGE = { PreCombatMain: "1", PostCombatMain: "2" };
 
   function badgeMarkup(digit) {
-    const { x, y, w, h, r } = MONOGRAM_BOX;
-    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/>`
-      + `<path d="${MONOGRAM_GLYPH.M}${MONOGRAM_GLYPH[digit]}"`
-      + ' stroke-width="1.35"/>';
+    // 只有字，没有方框——方框试过，会让图形显得更小、也更笨重。
+    return `<path d="${MONOGRAM_GLYPH.M}${MONOGRAM_GLYPH[digit]}" stroke-width="2.4"/>`;
   }
 
   function patchIcon(svg, phase) {
@@ -926,8 +934,7 @@
     const digit = PHASE_BADGE[phase];
     // 主阶段整块换成 M1/M2，所以**没有**图标库的图形要画。
     const core = digit ? badgeMarkup(digit)
-      : `<g transform="scale(${ICON_SCALE})" transform-origin="12 12">`
-        + PHASE_ICON_INNER[phase] + "</g>";
+      : `<g transform="${ICON_ZOOM_TRANSFORM}">` + PHASE_ICON_INNER[phase] + "</g>";
     svg.innerHTML = core;
   }
 
@@ -1361,11 +1368,11 @@
     iconInner: PHASE_ICON_INNER,
     text: PHASE_TEXT,
     badge: PHASE_BADGE,
-    monogramBox: MONOGRAM_BOX,
     monogramGlyph: MONOGRAM_GLYPH,
     selector: ICON_SELECTOR,
     viewBox: ICON_VIEW_BOX,
-    scale: ICON_SCALE,
+    zoom: ICON_ZOOM,
+    zoomTransform: ICON_ZOOM_TRANSFORM,
     badgeMarkup,
     patchIcon,
     originalSvgAttrs,

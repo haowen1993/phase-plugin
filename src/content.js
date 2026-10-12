@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.3.0";
+  const VERSION = "1.3.1";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -904,24 +904,34 @@
    * `stroke="currentColor"`），实心块放进去会显得格格不入，而且实心底要配反色文字，
    * 激活变色时会多一层要照看的东西。
    */
-  // 字的坐标直接按 24 网格算，并且**以 (12, 12) 为中心**——它现在是整个图标，
-  // 不再需要给别的图形让位，所以按「占满大半个画布」来画：高 18、宽约 14。
-  // 两个数字的笔画宽度不同（「1」窄、「2」宽），所以各自的起笔位置不同，
-  // 但整体包围盒都居中在 (12, 12) 附近。
+  // 字直接按 24 网格画，**以 (12, 12) 为中心**：它现在是整个图标，不需要给别的图形
+  // 让位。尺寸是三轮调出来的，记一下免得再来：
+  //   - 最早高 18、宽 16.5、描边 2.4：读得清，但太宽太挤，M 和数字糊成一团，
+  //     和旁边图标并排时明显偏大偏重。
+  //   - 中间试过高 12/13：字小了，10px 下笔画开始糊。
+  //   - 现在高 15、宽 12.4、描边 2.2、**字间距 2.4**。
+  // 关键是「高度要留住（不然 10px 下糊）、宽度要收（不然显大）、间距要拉（不然两笔
+  // 连成一团）、笔画要减（不然显重）」——四个方向互相拉扯，只能一起调。
   const MONOGRAM_GLYPH = {
-    // M 的三笔：左竖、中间 V、右竖。宽度按 8.4 定（高 18 的话，这个比例才不显得
-    // 又瘦又挤——原来按 6.2 画过，两竖之间几乎贴上）。
-    M: "M6.6 21V3M6.6 5.6L10.8 11L15 5.6M15 21V3",
-    "1": "M17.1 3.4L19.3 2.7V21",
-    "2": "M16.3 4.9a3.3 3.3 0 0 1 6.2.7c0 2.1-3.2 2.5-4.6 4.8L16.3 21H22.6",
+    // M 的三笔：左竖、中间 V、右竖。
+    M: "M6.6 19.5V4.5M6.6 6.6L9.3 10.3L12 6.6M12 19.5V4.5",
+    "1": "M14.4 4.8L16 4.3V19.5",
+    // 2：上半一个弯 + 一撇到底 + 底横
+    "2": "M13.7 5.8a2.5 2.5 0 0 1 4.7.5c0 1.6-2.4 1.9-3.4 3.6L13.7 19.5h4.7",
   };
+
+  /**
+   * 字形的描边宽度。比图标库默认的 2 略粗一点，但**明显比原来用的 2.4 细**——
+   * 2.4 配上原来那个 18 高的字，笔画几乎糊在一起，M 和数字连成一团。
+   */
+  const MONOGRAM_STROKE = 2.2;
 
   /** 主阶段 → 角标里的数字。有它才画「M<n>」，否则画图标库的图形。 */
   const PHASE_BADGE = { PreCombatMain: "1", PostCombatMain: "2" };
 
   function badgeMarkup(digit) {
     // 只有字，没有方框——方框试过，会让图形显得更小、也更笨重。
-    return `<path d="${MONOGRAM_GLYPH.M}${MONOGRAM_GLYPH[digit]}" stroke-width="2.4"/>`;
+    return `<path d="${MONOGRAM_GLYPH.M}${MONOGRAM_GLYPH[digit]}" stroke-width="${MONOGRAM_STROKE}"/>`;
   }
 
   function patchIcon(svg, phase) {
@@ -1372,6 +1382,7 @@
     selector: ICON_SELECTOR,
     viewBox: ICON_VIEW_BOX,
     zoom: ICON_ZOOM,
+    monogramStroke: MONOGRAM_STROKE,
     zoomTransform: ICON_ZOOM_TRANSFORM,
     badgeMarkup,
     patchIcon,

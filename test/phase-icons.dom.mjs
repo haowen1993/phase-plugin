@@ -268,25 +268,26 @@ describe("阶段图标：替换本身", () => {
     expect(iconOf("Draw").getAttribute("class")).toBe("h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
   });
 
-  it("主阶段带角标，其余阶段不带", () => {
+  it("两个主阶段是「方框带数字」的现成图标，且互不相同", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    // 主阶段整块就是字形：直接是「M1 / M2」两个字，没有 target、也没有方框
-    const M = icons().monogramGlyph.M;
-    expect(iconOf("PreCombatMain").innerHTML).toContain(M);
-    expect(iconOf("PostCombatMain").innerHTML).toContain(M);
-    expect(iconOf("Draw").innerHTML).not.toContain(M);
-    expect(iconOf("PreCombatMain").innerHTML).not.toContain("<rect");
-    // 两个字符的写法：M1 与 M2 必须不同
-    expect(iconOf("PreCombatMain").innerHTML).not.toBe(iconOf("PostCombatMain").innerHTML);
+    const pre = iconOf("PreCombatMain").innerHTML;
+    const post = iconOf("PostCombatMain").innerHTML;
+    // 方框那一笔是两个主阶段共有的
+    expect(pre).toContain("M3 5a2 2 0 0 1 2 -2h14");
+    expect(post).toContain("M3 5a2 2 0 0 1 2 -2h14");
+    // 数字不同 —— 这是这次改动的全部意义：两个主阶段一眼可分
+    expect(pre).not.toBe(post);
+    // 抓牌没有方框
+    expect(iconOf("Draw").innerHTML).not.toContain("M3 5a2 2 0 0 1 2 -2h14");
   });
 
-  it("十个非主阶段图标走缩放，M1/M2 不套缩放", () => {
+  it("12 个阶段套同一层放大，主阶段不再是特例", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    expect(iconOf("Draw").innerHTML).toContain(`scale(${icons().zoom})`);
-    // 主阶段整块就是字形，坐标本来就按 24 网格算，不需要再缩放
-    expect(iconOf("PreCombatMain").innerHTML).not.toContain("scale(");
+    for (const phase of ["Draw", "Upkeep", "PreCombatMain", "PostCombatMain"]) {
+      expect(iconOf(phase).innerHTML, phase).toContain(`scale(${icons().zoom})`);
+    }
   });
 
   it("兄弟节点没被动过：激活条与停止点都还在", () => {

@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.3.1";
+  const VERSION = "1.4.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -828,13 +828,13 @@
     Untap: "tabler/rotate-clockwise",
     Upkeep: "lucide/settings",
     Draw: "tabler/play-card",
-    PreCombatMain: "tabler/target",
+    PreCombatMain: "tabler/square-number-1",
     BeginCombat: "lucide/swords",
     DeclareAttackers: "lucide/sword",
     DeclareBlockers: "lucide/shield",
     CombatDamage: "lucide/zap",
     EndCombat: "lucide/flag",
-    PostCombatMain: "tabler/target",
+    PostCombatMain: "tabler/square-number-2",
     End: "lucide/hourglass",
     Cleanup: "lucide/broom",
   };
@@ -856,16 +856,19 @@
    * 图标库在 24 网格四周各留了约 2 的空白，缩到 10px 时图形只占约 8.3px，比原版
    * 14×14 的图标显得轻。放大 1.15 把它补回来。
    *
-   * **为什么是「缩放内容」而不是「收窄 viewBox」。** 收窄 viewBox 看起来更省事，
-   * 实测两种做法都不行，都渲染对比过：
-   *   - `viewBox="0 0 20 20"`：这是**矩形裁切**四周各 2 单位。圆形图标（target 外圈
-   *     到半径 9）左右两端正好在裁切线上，会被切掉。
+   * **为什么是「缩放内容」而不是「收窄 viewBox」。** 收窄 viewBox 看着更省事，但两条
+   * 路都走不通，都渲染对比过：
+   *   - `viewBox="0 0 20 20"` 是**矩形裁切**四周各 2 单位。图形贴到裁切线上的图标会
+   *     被切掉——两个主阶段的方框正好是 3..21，切在边上。
    *   - 收窄 viewBox 再让内容缩小去适配：内容缩到 20 却仍摆在 24 画布里，**反而比
    *     基准更小**（20/24 = 0.83 倍）。
    * 缩放内容没有这两个问题：画布不动，只把内容放大。
    *
    * 放大按 viewBox 单位算，所以描边宽度（同样是 viewBox 单位）跟着一起变粗，正好——
    * 图形变大而线条不变粗的话，反而会显得单薄。
+   *
+   * 12 个阶段**一视同仁**都套这层放大，包括两个主阶段。主阶段的方框会从 3..21 长到
+   * 1.8..22.2，仍在画布内、不会被裁。
    */
   const ICON_ZOOM = 1.15;
 
@@ -876,63 +879,16 @@
     Untap: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" />',   // tabler/rotate-clockwise
     Upkeep: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /> <circle cx="12" cy="12" r="3" />',   // lucide/settings
     Draw: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M19 5v14a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2" /> <path d="M8 6h.01" /> <path d="M16 18h.01" /> <path d="M12 16l-3 -4l3 -4l3 4l-3 4" />',   // tabler/play-card
-    PreCombatMain: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /> <path d="M7 12a5 5 0 1 0 10 0a5 5 0 1 0 -10 0" /> <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />',   // tabler/target
+    PreCombatMain: '<path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14" /> <path d="M10 10l2 -2v8" />',   // tabler/square-number-1
     BeginCombat: '<path d="m13 19 6-6" /> <path d="M14.5 17.5 3.586 6.586A2 2 0 013 5.172V3h2.172a2 2 0 011.414.586L17.5 14.5" /> <path d="m14.828 6.172 2.586-2.586A2 2 0 0118.828 3H21v2.172a2 2 0 01-.586 1.414l-2.586 2.586" /> <path d="m16 16 4 4" /> <path d="m19 21 2-2" /> <path d="m5 14 4 4" /> <path d="m5 21-2-2" /> <path d="M7.5 16.5 4 20" />',   // lucide/swords
     DeclareAttackers: '<path d="m11 19-6-6" /> <path d="m5 21-2-2" /> <path d="m8 16-4 4" /> <path d="M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5" />',   // lucide/sword
     DeclareBlockers: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />',   // lucide/shield
     CombatDamage: '<path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" />',   // lucide/zap
     EndCombat: '<path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528" />',   // lucide/flag
-    PostCombatMain: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /> <path d="M7 12a5 5 0 1 0 10 0a5 5 0 1 0 -10 0" /> <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />',   // tabler/target
+    PostCombatMain: '<path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14" /> <path d="M10 8h3a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-2a1 1 0 0 0 -1 1v2a1 1 0 0 0 1 1h3" />',   // tabler/square-number-2
     End: '<path d="M5 22h14" /> <path d="M5 2h14" /> <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" /> <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />',   // lucide/hourglass
     Cleanup: '<path d="M13.5 10.5 22 2" /> <path d="M14.734 13.841a2 2 0 00-.314-2.42L12.58 9.58a2 2 0 00-2.421-.314l-7.657 4.461A1 1 0 002.3 15.3l6.403 6.403a1 1 0 001.571-.204z" /> <path d="m5 18 2-2" /> <path d="m7.699 10.7 5.602 5.601" />',   // lucide/broom
   };
-
-  /**
-   * 两个主阶段的图标**整体就是「M1」/「M2」**：一个描边圆角矩形，里面是字。
-   *
-   * 这里换过三版，写清楚免得再走回去：
-   *
-   *   1. 圆 + 数字 1/2 —— 单看一个数字读者不知道它指什么，10px 下也糊。
-   *   2. target 同心圆 + 右上角挂一个「M1」小角标 —— 两个毛病：一是图形仍是
-   *      target，两个主阶段看起来还是同一个图案；二是图标只有 10px，而角上写清两个
-   *      字符至少横向要 6 个单位，24 网格里放不下「角标与图形不重叠」，只能让两者
-   *      叠着，很挤。
-   *   3. **现在这版：不要 target，整块就是「M1」/「M2」**。图形本身就是标签，两个
-   *      主阶段一眼可分，也不再有任何重叠问题。
-   *
-   * 圆角矩形画成**描边**而不是实心底：另外 10 个图标都是描边式（`fill="none"` +
-   * `stroke="currentColor"`），实心块放进去会显得格格不入，而且实心底要配反色文字，
-   * 激活变色时会多一层要照看的东西。
-   */
-  // 字直接按 24 网格画，**以 (12, 12) 为中心**：它现在是整个图标，不需要给别的图形
-  // 让位。尺寸是三轮调出来的，记一下免得再来：
-  //   - 最早高 18、宽 16.5、描边 2.4：读得清，但太宽太挤，M 和数字糊成一团，
-  //     和旁边图标并排时明显偏大偏重。
-  //   - 中间试过高 12/13：字小了，10px 下笔画开始糊。
-  //   - 现在高 15、宽 12.4、描边 2.2、**字间距 2.4**。
-  // 关键是「高度要留住（不然 10px 下糊）、宽度要收（不然显大）、间距要拉（不然两笔
-  // 连成一团）、笔画要减（不然显重）」——四个方向互相拉扯，只能一起调。
-  const MONOGRAM_GLYPH = {
-    // M 的三笔：左竖、中间 V、右竖。
-    M: "M6.6 19.5V4.5M6.6 6.6L9.3 10.3L12 6.6M12 19.5V4.5",
-    "1": "M14.4 4.8L16 4.3V19.5",
-    // 2：上半一个弯 + 一撇到底 + 底横
-    "2": "M13.7 5.8a2.5 2.5 0 0 1 4.7.5c0 1.6-2.4 1.9-3.4 3.6L13.7 19.5h4.7",
-  };
-
-  /**
-   * 字形的描边宽度。比图标库默认的 2 略粗一点，但**明显比原来用的 2.4 细**——
-   * 2.4 配上原来那个 18 高的字，笔画几乎糊在一起，M 和数字连成一团。
-   */
-  const MONOGRAM_STROKE = 2.2;
-
-  /** 主阶段 → 角标里的数字。有它才画「M<n>」，否则画图标库的图形。 */
-  const PHASE_BADGE = { PreCombatMain: "1", PostCombatMain: "2" };
-
-  function badgeMarkup(digit) {
-    // 只有字，没有方框——方框试过，会让图形显得更小、也更笨重。
-    return `<path d="${MONOGRAM_GLYPH.M}${MONOGRAM_GLYPH[digit]}" stroke-width="${MONOGRAM_STROKE}"/>`;
-  }
 
   function patchIcon(svg, phase) {
     svg.setAttribute("viewBox", ICON_VIEW_BOX);
@@ -941,11 +897,10 @@
     svg.setAttribute("stroke-width", ICON_STROKE_WIDTH);
     svg.setAttribute("stroke-linecap", "round");
     svg.setAttribute("stroke-linejoin", "round");
-    const digit = PHASE_BADGE[phase];
-    // 主阶段整块换成 M1/M2，所以**没有**图标库的图形要画。
-    const core = digit ? badgeMarkup(digit)
-      : `<g transform="${ICON_ZOOM_TRANSFORM}">` + PHASE_ICON_INNER[phase] + "</g>";
-    svg.innerHTML = core;
+    // 12 个阶段一视同仁：都是图标库的图形 + 同样的放大。两个主阶段**不再是特例**——
+    // 「方框里带数字」本身就是 Tabler 的现成图标（square-number-1 / -2）。
+    svg.innerHTML = `<g transform="${ICON_ZOOM_TRANSFORM}">`
+      + PHASE_ICON_INNER[phase] + "</g>";
   }
 
   /**
@@ -1377,14 +1332,10 @@
     iconSource: PHASE_ICON_SOURCE,
     iconInner: PHASE_ICON_INNER,
     text: PHASE_TEXT,
-    badge: PHASE_BADGE,
-    monogramGlyph: MONOGRAM_GLYPH,
     selector: ICON_SELECTOR,
     viewBox: ICON_VIEW_BOX,
     zoom: ICON_ZOOM,
-    monogramStroke: MONOGRAM_STROKE,
     zoomTransform: ICON_ZOOM_TRANSFORM,
-    badgeMarkup,
     patchIcon,
     originalSvgAttrs,
     isUnpatchedIcon,

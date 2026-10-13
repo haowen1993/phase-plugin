@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.7.0";
+  const VERSION = "1.8.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -333,6 +333,185 @@
     return `${ref.printingId}:${ref.size}`;
   }
 
+  // ────────────────────────────────────────────────────────────────────────
+  // 中文印刷 id → 英文印刷 id
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // ## 为什么必须做这件事
+  //
+  // 大学院废墟的图床用的是 **Scryfall 的英文印刷 id**。而 phase.rs 在中文界面下会去查
+  // 它自己那份 `scryfall-images.v2.zh.json`，把地址换成**中文印刷的 id**——两者是两组
+  // **完全不相交**的 id：实测 84393 条映射里，中文 id 与英文 id 的交集只有 4 个。
+  //
+  // 所以只要卡图地址里是中文 id，大学院就必然 404（实测 60 个中文 id：`/zhs/` 0/60、
+  // `/sf/` 0/60），而 Scryfall 100% 有图。
+  //
+  // ## 两条途径，先便宜的后贵的
+  //
+  //   1. **反查表**：phase.rs 自己会把那张映射表发出来（`data.phase-rs.dev/
+  //      scryfall-images.v2.zh.json`，线上 4 MB、CORS 全开）。它本来就是「英文 id →
+  //      中文 id」，反过来读就是我们要的映射。**零 API 调用、即时命中。**
+  //   2. **Scryfall REST API**：反查表还没到、或表里没有某个 id 时的兜底。
+  //      1~2 个请求：`/cards/{id}` 拿 `oracle_id`，再 `/cards/search?q=oracleid:… lang:en`
+  //      拿英文印刷。
+  //
+  // 用 `oracle_id` 而不是 `illustration_id`：后者只在「同一张插画被重印」时才跨语言一致，
+  // 而 `oracle_id` 标识**这张牌本身**，任何语言的任何印刷都指向同一个值。
+  //
+  // ## 为什么不在失败路径上做（曾经的想法，走不通）
+  //
+  // 中文地址在 **Scryfall 上是能加载的**（数据就在那儿，只是不是中文图）。图能加载
+  // 就不会触发 `error`，失败路径根本不会运行。所以必须**在请求发出之前**换掉地址。
+  const LOCALE_ART_MAP_URL = "https://data.phase-rs.dev/scryfall-images.v2.zh.json";
+
+  /** 中文印刷 id → 英文印刷 id。表到齐之前是空的，用到时会触发加载。 */
+  const zhToEnPrinting = new Map();
+  let localeMapLoading = null;
+  let localeMapReady = false;
+
+  /** 只认形状正确的条目，别把 `schema_version` 之类的元数据当成卡。 */
+  const PRINTING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function buildReverseMap(payload) {
+    if (!payload || typeof payload !== "object") return 0;
+    let added = 0;
+    for (const [englishId, entry] of Object.entries(payload)) {
+      if (!PRINTING_ID.test(englishId)) continue;
+      const normal = entry?.faces?.[0]?.normal;
+      if (typeof normal !== "string") continue;
+      const chineseId = normal.split("/").pop()?.split(".")[0];
+      // 没换印次（中英文同一个 id）就不必记，记了反而多一次查表。
+      if (!chineseId || chineseId === englishId || !PRINTING_ID.test(chineseId)) continue;
+      zhToEnPrinting.set(chineseId, englishId);
+      added += 1;
+    }
+    return added;
+  }
+
+  /**
+   * 拉一次映射表并建反查。失败就静默放弃——还有 REST API 那条兜底。
+   *
+   * 只在**真的遇到一个查不到的 id** 时才触发，所以英文界面下永远不会下载这 4 MB。
+   */
+  function ensureReverseMap() {
+    if (localeMapReady || localeMapLoading) return localeMapLoading;
+    localeMapLoading = (async () => {
+      try {
+        const response = await fetch(LOCALE_ART_MAP_URL, { headers: { Accept: "application/json" } });
+        if (!response.ok) return;
+        const added = buildReverseMap(await response.json());
+        if (added > 0) localeMapReady = true;
+        if (debug()) console.info(`[phase-rs-zh] 反查表就绪：${added} 条中→英印次映射`);
+      } catch {
+        // 网络失败/被拦：保持未就绪，下次再试。
+        localeMapLoading = null;
+      }
+    })();
+    return localeMapLoading;
+  }
+
+  // ── 途径 2：REST API 兜底 ───────────────────────────────────────────────
+
+  const printLookup = new Map();
+  const LOOKUP_CACHE_KEY = "phaseZhEnPrintingV1";
+  /** 单页最多查几次，避免刷屏时把 Scryfall 的速率限制打爆。 */
+  const MAX_LOOKUPS = 200;
+  let lookupCount = 0;
+
+  function readLookupCache(key) {
+    const cached = printLookup.get(key);
+    if (cached !== undefined) return cached;
+    try {
+      const stored = JSON.parse(localStorage.getItem(LOOKUP_CACHE_KEY) ?? "{}");
+      if (stored && typeof stored === "object" && typeof stored[key] === "string") {
+        printLookup.set(key, stored[key]);
+        return stored[key];
+      }
+    } catch { /* 无 localStorage 或内容损坏：当作没有缓存 */ }
+    return undefined;
+  }
+
+  function writeLookupCache(key, value) {
+    printLookup.set(key, value);
+    try {
+      const stored = JSON.parse(localStorage.getItem(LOOKUP_CACHE_KEY) ?? "{}");
+      stored[key] = value;
+      localStorage.setItem(LOOKUP_CACHE_KEY, JSON.stringify(stored));
+    } catch { /* 写不进去就算了，内存缓存仍然有效 */ }
+  }
+
+  /** 有上限的 fetch，避免一条请求挂住整个换算。 */
+  async function lookupFetch(url, timeoutMs) {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await fetch(url, {
+        signal: controller ? controller.signal : undefined,
+        headers: { Accept: "application/json" },
+      });
+      return response.ok ? await response.json() : null;
+    } catch {
+      return null;
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
+  }
+
+  /** 收藏编号是纯数字的优先——`TSP-157` 那种形式在大学院图床上不可靠。 */
+  function pickEnglishPrinting(prints) {
+    const usable = prints.filter((p) => p && typeof p.id === "string" && !p.digital && !p.promo);
+    if (usable.length === 0) return null;
+    const numeric = usable.filter((p) => /^\d+$/.test(String(p.collector_number ?? "")));
+    const pool = numeric.length > 0 ? numeric : usable;
+    return pool.reduce((best, p) => (String(p.released_at ?? "") < String(best.released_at ?? "") ? p : best));
+  }
+
+  /**
+   * 把中文印刷 id 换算成英文印刷 id。查不到就返回 null，调用方保持原样。
+   *
+   * 顺序是**先等反查表、再走 API**：表是免费的（一次下载覆盖全部 8 万条），而且它
+   * 常常正在加载中——直接跳去发 API 请求既慢又没必要。
+   *
+   * 只缓存**成功**的结果：失败可能是网络抖动，不该被永久记住。
+   */
+  async function findEnglishPrinting(zhPrintingId) {
+    const fromMap = zhToEnPrinting.get(zhPrintingId);
+    if (fromMap) return fromMap;
+
+    // 表还没就绪：若正在加载就等它（最多 8 秒），到了再查一次。这一步很关键——
+    // 首次遇到中文 id 时表往往正在下载，等它比发两次 API 请求快得多。
+    if (!localeMapReady) {
+      ensureReverseMap();
+      if (localeMapLoading) {
+        await Promise.race([localeMapLoading, new Promise((r) => setTimeout(r, 8000))]);
+        const afterWait = zhToEnPrinting.get(zhPrintingId);
+        if (afterWait) return afterWait;
+      }
+    }
+
+    const cached = readLookupCache(zhPrintingId);
+    if (cached !== undefined) return cached;
+    if (lookupCount >= MAX_LOOKUPS) return null;
+    lookupCount += 1;
+
+    const card = await lookupFetch(
+      `https://api.scryfall.com/cards/${encodeURIComponent(zhPrintingId)}`,
+      6000,
+    );
+    if (!card || typeof card.oracle_id !== "string") return null;
+
+    const found = await lookupFetch(
+      `https://api.scryfall.com/cards/search`
+      + `?q=${encodeURIComponent(`oracleid:${card.oracle_id} lang:en`)}&unique=prints`,
+      6000,
+    );
+    const pick = pickEnglishPrinting(Array.isArray(found?.data) ? found.data : []);
+    if (!pick) return null;
+
+    writeLookupCache(zhPrintingId, pick.id);
+    return pick.id;
+  }
+
   function giveUpOn(ref) {
     if (givenUp.size >= MAX_GIVEN_UP) givenUp.clear();
     givenUp.add(ladderKey(ref));
@@ -352,7 +531,45 @@
     const parsed = parseArtUrl(value);
     if (!parsed || parsed.origin !== "direct" || parsed.tier !== "scryfall") return value;
     if (givenUp.has(ladderKey(parsed.ref))) return value;
-    return urlFor(parsed, parsed.ref.size === ART_CROP ? "mtg-en" : "zh", "cdn");
+    // 插画裁切与语言无关，直接走英文层。
+    if (parsed.ref.size === ART_CROP) return urlFor(parsed, "mtg-en", "cdn");
+
+    // 应用在中文界面下会给「中文印刷 id」，而大学院图床只认「英文印刷 id」——两组 id
+    // 完全不相交，所以照搬 id 必然 404。这里查反查表换掉；**必须同步完成**，因为地址
+    // 一旦写进 DOM，浏览器立刻就发请求了，晚了就来不及（而且中文地址在 Scryfall 上
+    // 能加载成功，不会触发 error，失败路径根本没机会跑）。
+    //
+    // `shardA`/`shardB` 是 id 的前两个字符，**换 id 就必须一起换**，否则会拼出
+    // `/front/d/0/0000579f-…`——分片目录与文件名不符，大学院直接 404。这个坑踩过两次。
+    const englishId = zhToEnPrinting.get(parsed.ref.printingId);
+    if (englishId) {
+      const ref = { ...parsed.ref, printingId: englishId, shardA: englishId[0], shardB: englishId[1] };
+      return urlFor({ ...parsed, ref }, "zh", "cdn");
+    }
+
+    // 表里没有：可能反查表还没到，也可能这个 id 本来就是英文的（英文卡占多数）。
+    // 两种情况都照常按中文层改写——大学院没有中文图时会 404，再由失败路径去换算/降级。
+    const rewritten = urlFor(parsed, "zh", "cdn");
+    if (!localeMapReady) {
+      // 顺带把反查表拉起来。只在这条「查不到」的路径上触发，所以英文界面不会下载它。
+      ensureReverseMap().then(() => {
+        if (!localeMapReady) return;
+        // `document` 守卫不是多余：本脚本在 Node 里也会被加载（纯函数单测环境没有
+        // DOM）。少了它，测试会因为一个异步回调里的 ReferenceError 被判失败。
+        if (typeof document === "undefined") return;
+        // 表到了：把当前所有还没换过来的中文 id 地址就地换掉。
+        // 已经加载成功的图不会重下——浏览器换了 src 才发新请求。
+        for (const image of document.querySelectorAll("img")) {
+          for (const attr of ["src", "srcset"]) {
+            const raw = image.getAttribute(attr);
+            if (!raw) continue;
+            const next = attr === "src" ? rewriteUrl(raw) : mapSrcset(raw, rewriteUrl);
+            if (next !== raw) image.setAttribute(attr, next);
+          }
+        }
+      });
+    }
+    return rewritten;
   }
 
   /**
@@ -738,6 +955,20 @@
     }
 
     if (!image.isConnected) return;
+
+    // ── 先试「换算成英文印刷 id，再回大学院」 ──────────────────────────────
+    //
+    // 必须**排在重试与降级之前**。原因：`exists` 探的是同一条阶梯上的下一层，而中文
+    // 印刷 id 在**整条阶梯上都不存在**（实测 `/zhs/` 与 `/sf/` 对同一批中文 id 都是
+    // 0/60），于是 `exists` 为 false、`advanceLadder` 会带 `retry` 走「原地重试」——
+    // 拿一个 404 的地址白重试两次，再降级到 Scryfall。用户看到的就是「中文卡图裂了」。
+    //
+    // 换成英文 id 之后，大学院那边就有图了（`/zhs/` 有中文图就用中文，没有就 `/sf/`
+    // 英文），整条阶梯都不用走。
+    const resolved = await retryOnMtgchWithEnglishId(image, src);
+    if (resolved) return;
+
+    if (!image.isConnected) return;
     const outcome = advanceLadder(image, exists);
     if (outcome === "exhausted") return;
     if (debug()) {
@@ -745,6 +976,48 @@
         exists,
       });
     }
+  }
+
+  /**
+   * 把当前地址里的印刷 id 换算成英文印刷 id，换成大学院图床的地址。
+   *
+   * 成功返回 true（调用方就此打住，不再重试、不再降级）。任何一步不成立都返回 false，
+   * 由调用方继续走原来的阶梯——**绝不因为换算失败而让卡图变差**。
+   */
+  async function retryOnMtgchWithEnglishId(image, src) {
+    const parsed = parseArtUrl(src);
+    if (!parsed || parsed.ref.size === ART_CROP) return false;
+
+    const englishId = await findEnglishPrinting(parsed.ref.printingId);
+    if (debug()) {
+      console.info(`[phase-rs-zh] 换算查询 ${parsed.ref.printingId} → ${englishId ?? "(失败)"}`, {
+        origin: parsed.origin,
+        tableReady: localeMapReady,
+        tableSize: zhToEnPrinting.size,
+      });
+    }
+    if (!englishId || englishId === parsed.ref.printingId) return false;
+    if (!image.isConnected) return false;
+
+    // 换成大学院的地址（中文层）。注意这里**不看 origin**：即使当前地址已经在大学院
+    // 图床上，只要 id 是「换算前那个查不到图的 id」，换掉它仍然有意义——降级会把
+    // `/zhs/<中文id>` 变成 `/sf/<中文id>`，那还是同一个查不到的 id。
+    //
+    // `shardA`/`shardB` 是 id 的前两个字符，**换 id 就必须一起换**，否则会拼出
+    // `/front/d/0/0000579f-…` 这种分片目录与文件名不符的地址（实测 404）。
+    const ref = {
+      ...parsed.ref,
+      printingId: englishId,
+      shardA: englishId[0],
+      shardB: englishId[1],
+    };
+    const target = urlFor({ ...parsed, ref }, "zh", "cdn");
+    if (image.getAttribute("src") === target) return false;
+    if (debug()) {
+      console.info(`[phase-rs-zh] 换算命中，改回大学院：${parsed.ref.printingId} → ${englishId}`);
+    }
+    image.setAttribute("src", target);
+    return true;
   }
 
   function debug() {
@@ -1512,7 +1785,6 @@
     strokeWidth: ICON_STROKE_WIDTH,
     zoomTransform: ICON_ZOOM_TRANSFORM,
     patchIcon,
-    originalMark: ORIGINAL_MARK,
     originalSvgAttrs,
     isUnpatchedIcon,
     groupFans,
@@ -1523,6 +1795,15 @@
     phaseName: PHASE_NAME,
     identifyPhase,
     resolvePhases,
+    // 卡图改写的纯函数：便于排查「这张卡为什么没换/为什么空白」
+    parseArtUrl,
+    rewriteUrl,
+    nextTierUrl,
+    urlFor,
+    ladderKey,
+    // 中→英印次换算（排查与单测用）
+    buildReverseMap,
+    zhToEnPrinting,
     scanPhaseIcons,
   };
 

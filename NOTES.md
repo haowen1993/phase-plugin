@@ -387,6 +387,40 @@ sudo chown -R $(id -u):$(id -g) ~/.npm # 或者根治那个缓存目录的属主
 随机红绿。探测结果本身有 30 秒缓存（真实使用里这是省请求的关键），所以 `setProbe` 会
 顺手清掉缓存，否则用例之间会串味。
 
+### 为什么「异常绝不泄漏」是硬要求
+
+**phase.rs 把任何未捕获异常都上报成 `js_error`**：
+
+```js
+// client/src/services/telemetryEvents.ts
+window.addEventListener("error", (event) => trackEvent("js_error", errorFields(event.error, ...)));
+window.addEventListener("unhandledrejection", (event) => trackEvent("js_error", ...));
+```
+
+用户报过一次「用了之后游戏崩溃」，界面是 phase.rs 的 `ErrorBoundary` 兜底页。所以对我们
+来说，**代码里任何一处没接住的异常，在用户那里都表现为「游戏崩溃」**——哪怕它其实只是
+一条卡图处理失败。
+
+于是所有异步/事件入口都必须自己接住异常。清单（改动时别漏）：
+
+| 入口 | 为什么危险 |
+| --- | --- |
+| 卡图的 `MutationObserver` 回调 | 观察器回调抛错没人接，直接变成未捕获异常 |
+| 阶段图标的 `MutationObserver` 回调 | 同上 |
+| `window` 的 `error` 捕获监听（`onResourceError`） | **每次图片加载失败都会调用**，是触发最频繁的入口 |
+| `scanCardImages` / `scanPhaseIcons` | 逐条 try，一张失败不该带走整轮 |
+| `resolveTierFailure(...)` 的 Promise | 它是 `async`，用 `void` 调用**不接住拒绝** → `unhandledrejection` |
+| `install()` 本体 | 初始化抛错会让整个功能不可用，还会被记成 `js_error` |
+
+`test/assembly.dom.mjs` 末尾有一组「异常绝不泄漏给页面」的用例守着这条不变量。
+
+**排查这类问题的工具**：`npm run check:crash`——在真实 Chrome + 真实 React 里跑「注入图标
+→ 反复切换阶段 → 同时压卡图失败路径」，检查有没有未捕获异常、有没有出现兜底界面。
+
+一个方法论上的教训：**persist 用纯 DOM 模拟（happy-dom）复现不出真浏览器的行为**，
+而且 React 19 的 `render()` 不包 `act()` 时根本不会落到 DOM 上，用例会**假绿**
+（我一开始就是这么被骗过一轮的）。所以这个检查必须在真浏览器里跑。
+
 ### 图标对照页怎么重建
 
 ```bash
@@ -560,6 +594,8 @@ phase-rs-zh/
 │   ├── build-bookmarklet.mjs               从 src/content.js 生成上面那些产物
 │   ├── build-icon-preview.mjs              生成图标对照图与交互页（需要本地 Chrome）
 │   ├── check-icon-fits.mjs                 量图标放大后有没有超出画布（需要本地 Chrome）
+│   ├── check-crash-safety.mjs              真浏览器 + 真 React 压崩溃（需要本地 Chrome 与 phase.rs 克隆）
+│   ├── crash-harness/harness.jsx           上面那个检查用的页面（复刻 PhaseDot 结构）
 │   ├── check-live.mjs                      对真实图床核对三级阶梯
 │   └── check-app-data-coverage.mjs         用 phase.rs 的数据核对 URL 识别覆盖率
 └── package.json  vitest.config.mjs         仅 DOM 测试需要

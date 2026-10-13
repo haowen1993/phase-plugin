@@ -356,3 +356,44 @@ describe("装配：crossOrigin 元素不做跨源改写", () => {
     expect(element.getAttribute("src")).toBe(`/card-art/sf/normal/front/7/7/${CORS_ID}.webp`);
   });
 });
+
+describe("装配：异常绝不泄漏给页面", () => {
+  /**
+   * 为什么这组用例重要：phase.rs 在 `services/telemetryEvents.ts` 里监听了
+   * `window` 的 `error` 与 `unhandledrejection`，把任何未捕获异常上报成 `js_error`。
+   * 也就是说**我们代码里任何一处未接住的异常，在用户那里都表现为「游戏崩溃」**。
+   * 所以「入口处全部接住」不是防御性编程的洁癖，是这个功能的正确性条件。
+   */
+  it("图片加载失败路径：拦截回调不把异常抛出去", async () => {
+    const element = attachedImage(ZHS);
+    setProbe("missing");
+    let leaked = null;
+    const onWindowError = (event) => { leaked = event.error ?? event.message; };
+    window.addEventListener("error", onWindowError);
+    try {
+      element.dispatchEvent(new Event("error"));
+      await settle();
+    } catch (error) {
+      leaked = error;
+    } finally {
+      window.removeEventListener("error", onWindowError);
+    }
+    expect(leaked).toBeNull();
+  });
+
+  it("非图片元素上的 error 事件：直接放过，不抛错", () => {
+    const div = document.createElement("div");
+    document.body.append(div);
+    expect(() => div.dispatchEvent(new Event("error"))).not.toThrow();
+  });
+
+  it("阶段图标扫描在文档被清空时也不抛错", () => {
+    document.body.innerHTML = "";
+    expect(() => globalThis.__phaseZhPhaseIcons.scanPhaseIcons()).not.toThrow();
+  });
+
+  it("重复装配时的补扫描是安全的", () => {
+    document.body.innerHTML = "";
+    expect(() => vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-rs-zh/src/content.js" })).not.toThrow();
+  });
+});

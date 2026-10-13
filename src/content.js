@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.6.0";
+  const VERSION = "1.6.1";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -579,9 +579,14 @@
   }
 
   function scanCardImages() {
-    // 用 querySelectorAll 而不是 document.images：语义相同（都是文档里的 img
-    // 元素），但 document.images 并非所有 DOM 实现都提供，测试环境就会缺。
-    for (const image of Array.from(document.querySelectorAll("img"))) rewriteElement(image);
+    for (const image of document.querySelectorAll("img")) {
+      try {
+        rewriteElement(image);
+      } catch (error) {
+        // 一张图失败不该让整轮扫描停下，更不该把异常抛到观察器/事件层。
+        if (debug()) console.warn("[phase-rs-zh] 卡图改写失败", error);
+      }
+    }
   }
 
   /**
@@ -672,6 +677,18 @@
    * 「同步拦下」的判据是「这个元素上还有可降的层级」，这不需要网络：纯粹的 URL 判断。
    */
   function onResourceError(event) {
+    // 这个监听**每次图片加载失败都会被调用**，是整个脚本里触发最频繁的入口之一。
+    // 它抛出的异常没有任何人接：会变成未捕获异常，被 phase.rs 的全局 `error` 监听
+    // 上报成 `js_error`（`services/telemetryEvents.ts`），界面上就是「游戏崩溃」。
+    // 所以整段都包在 try 里——代价是一次 try，收益是这条路径永远不会把异常泄漏出去。
+    try {
+      handleResourceError(event);
+    } catch (error) {
+      if (debug()) console.warn("[phase-rs-zh] 卡图失败处理出错", error);
+    }
+  }
+
+  function handleResourceError(event) {
     const image = event.target;
     if (!(image instanceof HTMLImageElement)) return;
 
@@ -684,7 +701,12 @@
 
     // 同步拦住，别让应用看到这次失败。
     event.stopPropagation();
-    void resolveTierFailure(image, onLadder);
+    // `void` 只表示「不 await」，**不接住拒绝**：这个 async 函数一旦抛错就变成
+    // `unhandledrejection`，而 phase.rs 同样监听该事件并上报 `js_error`
+    // （`services/telemetryEvents.ts`）。所以显式接住。
+    resolveTierFailure(image, onLadder).catch((error) => {
+      if (debug()) console.warn("[phase-rs-zh] 降级处理失败", error);
+    });
   }
 
   /** 该元素上所有待判定的卡图 URL：`src` 与 `srcset` 的全部候选。 */
@@ -776,10 +798,15 @@
     const root = document.documentElement;
     if (!root || typeof MutationObserver !== "function") return;
     const observer = new MutationObserver((records) => {
-      for (const record of records) {
-        if (record.type !== "attributes") continue;
-        const target = record.target;
-        if (target instanceof HTMLImageElement) rewriteElement(target);
+      // 同上：回调抛出的异常会变成未捕获异常，被应用的遥测上报成 js_error。
+      try {
+        for (const record of records) {
+          if (record.type !== "attributes") continue;
+          const target = record.target;
+          if (target instanceof HTMLImageElement) rewriteElement(target);
+        }
+      } catch (error) {
+        if (debug()) console.warn("[phase-rs-zh] 卡图属性改写失败", error);
       }
     });
     observer.observe(root, {
@@ -1200,7 +1227,14 @@
   }
 
   function scanPhaseIcons() {
-    const candidates = Array.from(document.querySelectorAll(ICON_SELECTOR)).filter(isUnpatchedIcon);
+    let candidates;
+    try {
+      candidates = Array.from(document.querySelectorAll(ICON_SELECTOR)).filter(isUnpatchedIcon);
+    } catch (error) {
+      // querySelectorAll 本身不该抛，但这里多一层兜底的成本是零。
+      if (debug()) console.warn("[phase-rs-zh] 阶段图标候选收集失败", error);
+      return;
+    }
     const planned = resolvePhases(candidates);
     for (const [icon, phase] of planned) {
       try {
@@ -1242,7 +1276,16 @@
       if (!relevant) return;
       // 走整轮扫描而不是只处理那一个节点：识别依赖「组里有几个图标」，而组里的
       // 其它成员可能刚好也在这一批记录里。整轮扫描一次批次只做一次。
-      scanPhaseIcons();
+      //
+      // **整个回调都必须包在 try 里**：观察器回调抛出的异常没人接，会变成未捕获异常
+      // ——而 phase.rs 有全局 `error` 监听把任何未捕获异常上报成 `js_error`
+      // （`services/telemetryEvents.ts`），在界面上就表现为「游戏崩溃」。我们的代码
+      // 不该有任何路径能把异常泄漏到那个层面。
+      try {
+        scanPhaseIcons();
+      } catch (error) {
+        if (debug()) console.warn("[phase-rs-zh] 阶段图标扫描失败", error);
+      }
     });
     observer.observe(root, { subtree: true, childList: true });
   }
@@ -1358,6 +1401,12 @@
   // 脱离 DOM 加载（Node 单测）时只暴露上面的纯函数，不装配。
   if (typeof window !== "undefined" && typeof document !== "undefined"
     && typeof HTMLImageElement === "function") {
-    install();
+    // 装配失败也不该把异常抛进页面：书签是「点一下就该生效」的东西，一个初始化异常
+    // 会让整个功能不可用，还会被应用的遥测记成 js_error。
+    try {
+      install();
+    } catch (error) {
+      console.error("[phase-rs-zh] 装配失败", error);
+    }
   }
 })();

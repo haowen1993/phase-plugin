@@ -74,7 +74,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.9.1";
+  const VERSION = "1.9.2";
   // ────────────────────────────────────────────────────────────────────────
   // 卡图：英文界面下改走大学院废墟
   // ────────────────────────────────────────────────────────────────────────
@@ -166,21 +166,78 @@
   const MAX_ART_REQUESTS = 400;
   let artRequestCount = 0;
 
-  function readArtCache() {
+  /**
+   * 持久化缓存：**内存里只留一份，落盘每页只做一次**。
+   *
+   * 以前的写法是「每次写入都 `JSON.parse` 整份 + `JSON.stringify` 整份 + `setItem`」。
+   * 一局对局可能有几百张不同的印刷，那就是几百次「解析几百 KB + 序列化几百 KB + 写
+   * 几百 KB」——量过：1000 条约 367 KB，每次 `JSON.parse` 约 0.3 ms，而 `setItem`
+   * 还要再序列化一遍并且是**同步阻塞**的。
+   *
+   * 更要紧的是它**会静默失败**：`setItem` 在配额用尽时抛异常，而原来的 catch 把它
+   * 吞掉了，于是「有时记住了、有时没记住」。现在改成一次落盘，并把失败说出来。
+   */
+  let artCacheDirty = false;
+  let artCacheFlushScheduled = false;
+
+  function storageAvailable() {
     try {
-      const raw = JSON.parse(localStorage.getItem(ART_CACHE_KEY) ?? "{}");
-      return raw && typeof raw === "object" ? raw : {};
+      return typeof localStorage !== "undefined" && localStorage !== null;
+    } catch {
+      return false;   // 某些隐私模式下连读这个属性都会抛
+    }
+  }
+
+  /**
+   * 过滤掉形状不对的缓存条目。**纯函数**，便于单测。
+   *
+   * 上游换字段名（或有人手改过存储）时，坏条目不该让整份缓存失效——一张一张地丢。
+   */
+  function sanitizeArtCache(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const clean = {};
+    for (const [id, uris] of Object.entries(raw)) {
+      if (uris && typeof uris === "object" && typeof uris.normal === "string") clean[id] = uris;
+    }
+    return clean;
+  }
+
+  function loadArtCache() {
+    if (!storageAvailable()) return {};
+    try {
+      return sanitizeArtCache(JSON.parse(localStorage.getItem(ART_CACHE_KEY) ?? "{}"));
     } catch {
       return {};
     }
   }
 
-  function writeArtCache(printingId, uris) {
+  const artCache = loadArtCache();
+
+  function flushArtCache() {
+    artCacheFlushScheduled = false;
+    if (!artCacheDirty) return;
+    artCacheDirty = false;
+    if (!storageAvailable()) return;
     try {
-      const all = readArtCache();
-      all[printingId] = uris;
-      localStorage.setItem(ART_CACHE_KEY, JSON.stringify(all));
-    } catch { /* 写不进去就算了，内存缓存仍然有效 */ }
+      localStorage.setItem(ART_CACHE_KEY, JSON.stringify(artCache));
+    } catch (error) {
+      // 配额用尽（或隐私模式禁用存储）：说出来，别静默变成「有时记得住有时记不住」。
+      // 内存缓存仍然有效，所以本页不受影响，只是下次刷新要重新查。
+      if (debug()) console.warn("[phase-rs-zh] 卡图缓存写不进 localStorage，本次会话内仍然有效", error);
+    }
+  }
+
+  function scheduleArtCacheFlush() {
+    artCacheDirty = true;
+    if (artCacheFlushScheduled) return;
+    artCacheFlushScheduled = true;
+    // 合并同一批的多次写入；页面要走了就立刻写（那时候丢数据最可惜）。
+    setTimeout(flushArtCache, 1000);
+  }
+
+  function writeArtCache(printingId, uris) {
+    artCache[printingId] = uris;
+    scheduleArtCacheFlush();
   }
 
   /**
@@ -193,7 +250,7 @@
     const cached = artRequests.get(printingId);
     if (cached) return cached;
 
-    const stored = readArtCache()[printingId];
+    const stored = artCache[printingId];
     if (stored) {
       const done = Promise.resolve(stored);
       artRequests.set(printingId, done);
@@ -1208,6 +1265,11 @@
     }
     // 从 bfcache 回来时页面可能被浏览器整体恢复过一遍，补一次扫描。
     window.addEventListener("pageshow", scan);
+    // 页面要走了就把还没落盘的缓存写掉——那时候丢数据最可惜。
+    window.addEventListener("pagehide", flushArtCache);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushArtCache();
+    });
     console.info(`[phase-rs-zh] 已启用 v${VERSION}（卡图 + 阶段图标）`);
   }
 
@@ -1268,6 +1330,10 @@
     englishPrintingIdOf,
     localizedUrlToEnglish: LOCALIZED_URL_TO_ENGLISH,
     isMtgchUrl,
+    // 缓存落盘（测试要立刻落盘，不等定时器）
+    flushArtCache,
+    sanitizeArtCache,
+    artCache,
     /** 断开本脚本挂上的全部观察器。测试要重装环境时用；生产里重复点击也不会走到这。 */
     disconnectObservers: () => {
       while (liveObservers.length > 0) {
@@ -1296,7 +1362,8 @@
         本地化表索引条数: LOCALIZED_URL_TO_ENGLISH.size,
         是否截获到应用的表: localeMapCaptured,
         已查询过的印刷: artRequests.size,
-        缓存条数: Object.keys(readArtCache()).length,
+        缓存的印刷条数: Object.keys(artCache).length,
+        缓存待落盘: artCacheDirty,
         卡图总数: images.length,
         按来源: byTier,
         已加载失败: images.filter((i) => i.complete && i.naturalWidth === 0).length,

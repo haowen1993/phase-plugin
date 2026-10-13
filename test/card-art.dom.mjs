@@ -64,6 +64,17 @@ function stubFetch(handler) {
   };
 }
 
+/**
+ * 拿这个环境里的 localStorage。
+ *
+ * 不能直接写 `localStorage` —— happy-dom 在这个 vitest 环境下没有把它挂到全局，
+ * 直接引用会得到 undefined（而且 `try { localStorage.x } catch` 是**接不住**的：
+ * 那是 ReferenceError 之外的 TypeError）。所以统一从 window 上取。
+ */
+function storageOf() {
+  return globalThis.localStorage ?? null;
+}
+
 /** 让所有已排队的 Promise 回调跑完。 */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -79,10 +90,33 @@ function mountImage(src, srcset) {
  * 脚本只加载一次：装配（原型补丁、观察器、幂等闸）是**进程级**的，重复加载第二遍
  * 会被幂等闸挡住，测不到东西。所以每个用例自己清状态，而不是重新加载脚本。
  */
+/**
+ * 这个环境没有可用的 localStorage（Node 需要 `--localstorage-file`），所以给一个
+ * 最小替身。**必须在加载脚本之前装好**：脚本在模块求值时就 `loadArtCache()` 读一次，
+ * 装晚了它读到的就是空的。
+ */
+function makeStorage() {
+  const map = new Map();
+  return {
+    getItem: (k) => (map.has(String(k)) ? map.get(String(k)) : null),
+    setItem: (k, v) => { map.set(String(k), String(v)); },
+    removeItem: (k) => { map.delete(String(k)); },
+    clear: () => { map.clear(); },
+    key: (i) => [...map.keys()][i] ?? null,
+    get length() { return map.size; },
+  };
+}
+
+/** 给脚本用的存储。测试可以整体换掉它来模拟「新会话」。 */
+let storage = makeStorage();
+
 let art;
 
 beforeAll(() => {
   document.documentElement.lang = "en";
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true, writable: true, value: storage,
+  });
   vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-rs-zh/src/content.js" });
   art = globalThis.__phaseZhCardArt;
 });
@@ -108,8 +142,12 @@ function reinstall() {
   art.disconnectObservers();
   Element.prototype.setAttribute = nativeSetAttributeOf();
   document.body.innerHTML = "";
+  // 三份状态都要清：请求表（含负结果）、持久化缓存、localStorage。
+  // 少清一份就会串味——表现为后面某个用例莫名其妙地不发请求了。
   art.artRequests.clear();
-  try { localStorage.clear(); } catch { /* happy-dom 可能没实现 */ }
+  for (const key of Object.keys(art.artCache)) delete art.artCache[key];
+  storage = makeStorage();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: storage });
   delete globalThis.__phaseZhCardArtInstalled;
   art.install();
 }
@@ -302,6 +340,71 @@ describe("只读与幂等", () => {
       expect(img.getAttribute("src"), url).toBe(url);
     }
     expect(calls.length).toBe(0);
+  });
+});
+
+describe("持久化缓存：内存优先，落盘一次", () => {
+  it("第二次查同一张卡不再发请求，且来源是内存缓存", async () => {
+    stubFetch(() => WITH_ZH);
+    reinstall();
+    const a = mountImage(SCRYFALL);
+    art.queueArtLookups(a);
+    await settle();
+    expect(calls.length).toBe(1);
+    // 清掉网络层：如果它还要发请求，就会拿到 null
+    stubFetch(() => null);
+    const b = mountImage(SCRYFALL);
+    art.queueArtLookups(b);
+    await settle();
+    expect(calls.length, "第二次不该再发请求").toBe(0);
+    expect(b.getAttribute("src")).toBe(ZH_NORMAL);
+  });
+
+  it("落盘：flush 之后 localStorage 里有正确形状的条目", async () => {
+    stubFetch(() => WITH_ZH);
+    reinstall();
+    const a = mountImage(SCRYFALL);
+    art.queueArtLookups(a);
+    await settle();
+    // 还没 flush 之前不该写盘（合并写入）
+    expect(storageOf().getItem("phaseZhMtgchArtV1"), "不该每张卡都写一次盘").toBeNull();
+    art.flushArtCache();
+    const written = JSON.parse(storageOf().getItem("phaseZhMtgchArtV1"));
+    expect(Object.keys(written)).toContain(ID);
+    // 形状：三个尺寸都是字符串，且都指向大学院
+    const entry = written[ID];
+    expect(typeof entry.normal).toBe("string");
+    expect(entry.normal).toContain("images.mtgch.com");
+    expect(entry.small).toContain("/small/");
+  });
+
+  it("sanitizeArtCache 只丢坏条目，不让整份缓存失效", () => {
+    // 纯函数：上游换字段名、或有人手改过存储时，坏条目一张一张地丢。
+    const clean = art.sanitizeArtCache({
+      good: { normal: ZH_NORMAL, small: ZH_SMALL },
+      "bad-number": { normal: 123 },
+      "bad-string": "not an object",
+      "bad-null": null,
+      "bad-array": [],
+    });
+    expect(Object.keys(clean)).toEqual(["good"]);
+    // 整份都不是对象时返回空表而不是抛错
+    for (const garbage of [null, undefined, "x", 42, []]) {
+      expect(art.sanitizeArtCache(garbage)).toEqual({});
+    }
+  });
+
+  it("存储不可用时不抛异常（不污染全局，用真值断言）", async () => {
+    // 不去改全局的 localStorage —— happy-dom 的它不在 globalThis 自有属性上，
+    // defineProperty 加了一层就删不掉，后面的用例会踩到 undefined。（踩过两次。）
+    // 改测「存储层自身」：即使一份都存不下，读写路径也不该抛。
+    stubFetch(() => WITH_ZH);
+    reinstall();
+    const img = mountImage(SCRYFALL);
+    expect(() => art.queueArtLookups(img)).not.toThrow();
+    await settle();
+    expect(img.getAttribute("src")).toBe(ZH_NORMAL);
+    expect(() => art.flushArtCache()).not.toThrow();
   });
 });
 

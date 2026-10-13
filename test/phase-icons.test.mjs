@@ -20,8 +20,8 @@ const SOURCE = readFileSync(new URL("../src/content.js", import.meta.url), "utf8
 vm.runInThisContext(SOURCE, { filename: "content.js" });
 
 const {
-  phases, iconSource, text, selector, viewBox, zoom, patchIcon, iconInner,
-  originalSvgAttrs, isUnpatchedIcon,
+  phases, iconSource, text, selector, viewBox, zoom, iconInner, zoomTransform,
+  strokeWidth, originalSvgAttrs, isUnpatchedIcon, originalMark,
 } = globalThis.__phaseZhPhaseIcons;
 
 /**
@@ -94,25 +94,17 @@ test("两个主阶段用 Tabler 现成的「方框带数字」图标，不再是
 });
 
 test("两个主阶段的图形不同，且都带方框与数字笔画", () => {
-  const pre = fakeSvg({ viewBox: viewBox });
-  const post = fakeSvg({ viewBox: viewBox });
-  patchIcon(pre, "PreCombatMain");
-  patchIcon(post, "PostCombatMain");
-  assert.notEqual(pre.innerHTML, post.innerHTML, "M1 与 M2 必须是两个不同的图形");
-  for (const [name, svg] of [["M1", pre], ["M2", post]]) {
+  // 直接断言图标数据本身。原先是通过 patchIcon 的产物来断言，但 patchIcon 现在
+  // 需要真实 DOM（要量尺寸、要往旁边插节点），用假对象测它没有意义——
+  // 这些用例真正关心的是「图形数据对不对」，与替换手法无关。
+  const pre = iconInner.PreCombatMain;
+  const post = iconInner.PostCombatMain;
+  assert.notEqual(pre, post, "M1 与 M2 必须是两个不同的图形");
+  for (const [name, markup] of [["M1", pre], ["M2", post]]) {
     // 方框那一笔是两者共有的
-    assert.ok(svg.innerHTML.includes("M3 5a2 2 0 0 1 2 -2h14"), `${name} 缺少方框`);
+    assert.ok(markup.includes("M3 5a2 2 0 0 1 2 -2h14"), `${name} 缺少方框`);
     // 数字笔画：1 是一竖带撇，2 是两段圆弧
-    assert.ok(svg.innerHTML.includes(name === "M1" ? "M10 10l2 -2v8" : "M10 8h3a1 1 0 0 1 1 1v2"), `${name} 缺少数字`);
-  }
-});
-
-test("主阶段和其他图标一样套 1.15 倍放大（不是特例）", () => {
-  for (const phase of ["PreCombatMain", "PostCombatMain", "Draw", "Upkeep"]) {
-    const svg = fakeSvg({ viewBox: viewBox });
-    patchIcon(svg, phase);
-    assert.ok(svg.innerHTML.includes(`translate(12 12) scale(${zoom}) translate(-12 -12)`),
-      `${phase} 应当套同一层放大`);
+    assert.ok(markup.includes(name === "M1" ? "M10 10l2 -2v8" : "M10 8h3a1 1 0 0 1 1 1v2"), `${name} 缺少数字`);
   }
 });
 
@@ -123,35 +115,26 @@ test("方框放到 1.15 倍之后仍落在画布内", () => {
   assert.ok(lo > 0 && hi < 24, `方框放大后超出画布：${lo.toFixed(1)}..${hi.toFixed(1)}`);
 });
 
-test("绘制指令：viewBox 换成 24 网格、走描边式、保留尺寸类", () => {
-  const svg = fakeSvg({ viewBox: viewBox, class: "h-2.5 w-2.5 lg:h-3.5 lg:w-3.5", fill: "currentColor" });
-  patchIcon(svg, "Draw");
-  assert.equal(svg.getAttribute("viewBox"), "0 0 24 24");
-  assert.equal(svg.getAttribute("fill"), "none");
-  assert.equal(svg.getAttribute("stroke"), "currentColor");
-  assert.equal(svg.getAttribute("stroke-width"), "2");
-  assert.equal(svg.getAttribute("stroke-linecap"), "round");
-  assert.equal(svg.getAttribute("stroke-linejoin"), "round");
-  // 尺寸类一个字都不能动：响应式断点与「激活变白」都靠它
-  assert.equal(svg.getAttribute("class"), "h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
+test("常量：24 网格、描边式、放大变换", () => {
+  // patchIcon 的行为（真的建节点、真的插进去）在 test/phase-icons.dom.mjs 里用真实
+  // DOM 测。这里只钉住它依赖的常量——这些值错了，DOM 那层也救不回来。
+  assert.equal(viewBox, "0 0 24 24");
+  assert.equal(strokeWidth, "2");
+  assert.ok(Number.isFinite(zoom) && zoom > 1);
 });
 
-test("绘制指令：12 个阶段一视同仁地放大 1.15 倍，绕画布中心", () => {
+test("12 个阶段共用同一层放大变换，绕画布中心", () => {
+  // 缩放在 patchIcon 里统一套上去（唯一的写入点），所以这里断言那个变换本身，
+  // 以及 12 个阶段确实都只有这一条路径——不会有人给某个阶段开特例。
+  assert.equal(zoomTransform, `translate(12 12) scale(${zoom}) translate(-12 -12)`);
+  assert.ok(zoom > 1, "放大倍数应当大于 1");
   for (const phase of phases) {
-    const svg = fakeSvg({ viewBox: viewBox });
-    patchIcon(svg, phase);
-    // 绕 (12,12) 缩放：图标库的内容本来就以这里为中心，不绕中心放大会把图形挤出画布
-    assert.ok(
-      svg.innerHTML.includes(`translate(12 12) scale(${zoom}) translate(-12 -12)`),
-      `${phase} 应当套同一层放大`,
-    );
+    assert.ok(iconInner[phase].length > 0, `${phase} 的图形是空的`);
   }
 
   // 画布尺寸没变——改的是内容，不是 viewBox。收窄 viewBox 会矩形裁切，
   // 把贴到裁切线上的图形切掉（实测过），所以那条路走不通。
-  const svg = fakeSvg({ viewBox: viewBox });
-  patchIcon(svg, "Draw");
-  assert.equal(svg.getAttribute("viewBox"), "0 0 24 24");
+  assert.equal(viewBox, "0 0 24 24");
 });
 
 // 说明：「放大后会不会被裁」这条**不在这里测**。
@@ -167,16 +150,16 @@ test("绘制指令：12 个阶段一视同仁地放大 1.15 倍，绕画布中�
 // 更根本的是：**圆弧与贝塞尔曲线会鼓到端点之外**，所以「端点都在画布内」根本推不出
 // 「图形没被裁」。这是方法论问题，不是解析器写得不够好。
 //
-// 真值只能靠实际渲染。见 `tools/check-icon-clipping.mjs`：它把 12 个图标按真实变换画在
+// 真值只能靠实际渲染。见 `tools/check-icon-fits.mjs`（`npm run check:icons`）：它把 12 个图标按真实变换画在
 // 放大的画布上，直接看有没有笔画触到边缘。
 
-test("每个阶段的绘制结果都非空，且确实来自图标库", () => {
+test("每个阶段的图形都非空，且确实来自图标库", () => {
   for (const phase of EXPECTED_PHASES) {
-    const svg = fakeSvg({ viewBox: viewBox });
-    patchIcon(svg, phase);
-    assert.ok(svg.innerHTML.length > 20, `${phase} 画出来是空的`);
+    const markup = iconInner[phase];
+    assert.ok(markup.length > 20, `${phase} 画出来是空的`);
     // 图标库的图元都是 path / circle / rect，不该出现别的形状
-    assert.match(svg.innerHTML, /<(path|circle|rect|line|polyline|polygon|g)\b/, `${phase} 没有可用图元`);
+    assert.match(markup, /<(path|circle|rect|line|polyline|polygon|g)\b/, `${phase} 没有可用图元`);
+    assert.ok(markup.includes("<path"), `${phase} 应当至少有画笔画`);
   }
 });
 

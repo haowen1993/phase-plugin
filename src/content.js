@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.6.1";
+  const VERSION = "1.7.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -921,17 +921,99 @@
     Cleanup: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M3 21v-4a4 4 0 1 1 4 4h-4" /> <path d="M21 3a16 16 0 0 0 -12.8 10.2" /> <path d="M21 3a16 16 0 0 1 -10.2 12.8" /> <path d="M10.6 9a9 9 0 0 1 4.4 4.4" />',   // tabler/brush
   };
 
+  /**
+   * 把原版图标换成图标库的图形——**不碰 React 拥有的任何节点**。
+   *
+   * ## 为什么要写成这样（重要，别改回去）
+   *
+   * 早先的做法是就地改那个 `<svg>`：设 viewBox / fill / stroke，再 `innerHTML =`
+   * 换掉它的子节点。那会**把 React 记账的 `<path>`/`<circle>` 从 DOM 里摘掉**，
+   * 并往 `<svg>` 里塞进 React 不知道的 `<g>`。React 后续任何一次针对那些节点的操作
+   * （重渲染、卸载、切换子节点）都可能出问题，用户看到的就是 phase.rs 的
+   * ErrorBoundary 兜底页。实测「点书签时没事、玩一会儿切换阶段才崩、每次都崩」，
+   * 与「React 之后才去动那些被摘掉的节点」完全吻合。
+   *
+   * 现在的做法是**只读 + 旁挂**：
+   *
+   *   1. 把原版 `<svg>` 置为 `visibility: hidden` —— 它保持完整、保持占位，
+   *      React 想怎么管都行，我们一个属性和子节点都不动（只加数据标记）。
+   *   2. 在它旁边**插入一个我们自己新建的 `<svg>`**，装着要显示的图形。
+   *      这个节点完全归我们所有，React 从不认领它、也就不会去动它。
+   *
+   * 为什么用 `visibility` 而不是 `display: none`：原版 SVG 得**继续占着**它那格布局。
+   * 一旦它退出布局，按钮里其它依赖流式排布的兄弟会跑位。`visibility: hidden` 同时
+   * 满足「看不见」和「仍占位」。
+   *
+   * 尺寸靠**照抄原版的 class**：注入节点与原版 class 相同、又在同一个父容器里，
+   * 所以整条 CSS 级联（按钮里的 `h-2.5 lg:h-3.5`、chip 与抽屉里父级的 `[&>svg]:h-3`…）
+   * 对两者的结果必然一致，我们不需要复刻任何一条 CSS 逻辑。
+   */
   function patchIcon(svg, phase) {
-    svg.setAttribute("viewBox", ICON_VIEW_BOX);
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", ICON_STROKE_WIDTH);
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    // 12 个阶段一视同仁：都是图标库的图形 + 同样的放大。两个主阶段**不再是特例**——
-    // 「方框里带数字」本身就是 Tabler 的现成图标（square-number-1 / -2）。
-    svg.innerHTML = `<g transform="${ICON_ZOOM_TRANSFORM}">`
+    // 把原版藏起来并标记：这样即使下面注入失败，也不会在同一轮里被反复处理。
+    // 用内联样式而不是 class —— 内联样式优先级高于任何选择器，不会被站点 CSS 改回去。
+    svg.style.visibility = "hidden";
+    svg.setAttribute(ORIGINAL_MARK, phase);
+
+    // 我们自己的 SVG。属性用图标库那一套（24 网格、描边式）。
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", ICON_VIEW_BOX);
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "currentColor");
+    icon.setAttribute("stroke-width", ICON_STROKE_WIDTH);
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.setAttribute("data-prz", phase);
+
+    // 尺寸：照抄 class（见上面的说明）。class 缺失也能跑，只是会退回 SVG 默认尺寸。
+    const originalClass = svg.getAttribute("class");
+    if (originalClass) icon.setAttribute("class", originalClass);
+
+    // 尺寸**只靠照抄来的 class**，不写内联宽高。
+    //
+    // 注入节点与原版的 class 完全相同、又在同一个父容器里，所以整条 CSS 级联
+    // （按钮上的 `h-2.5 lg:h-3.5`、chip 与抽屉里父级的 `[&>svg]:h-3`…）对两者的
+    // 结果必然一致——包括 flex 收缩这类不好复刻的情况。
+    //
+    // 试过另外两种写法，都不如这条：
+    //   * 写 `width`/`height` **属性**：属性与 CSS 会打架（CSS 只约束高度时，
+    //     属性又把宽度定死），实测注入 14px 而原版 4px。
+    //   * 把量到的像素写成**内联样式**：优先级最高，虽然当下一定对得上，但站点 CSS
+    //     变化时不会跟着变，而且每多一个内联维度就多一处要跟 CSS 对齐的东西。
+    try {
+      icon.style.color = getComputedStyle(svg).color;
+    } catch { /* 取不到就靠继承 */ }
+
+    // 覆盖在原版上面。`visibility` 会继承，所以新节点必须显式设回 visible，
+    // 否则它跟着原版一起隐形。
+    icon.style.visibility = "visible";
+    icon.style.position = "absolute";
+    icon.style.pointerEvents = "none";
+
+    // 位置也**实测锚定**，不靠「绝对定位元素的静态位置」。
+    //
+    // 静态位置在 flex 容器里和原版的真实位置并不总是重合——实测 10 个图标里有 1 个
+    // 横向偏了 3.7px（原版是被 `justify-center` 居中的 flex item，而绝对定位元素的
+    // 静态位置由流内内容决定）。
+    //
+    // 用 `offsetLeft`/`offsetTop` 而不是自己拿两个 `getBoundingClientRect()` 相减：
+    // 后者是**边框盒**坐标，相减时会漏掉祖先的 border 与 padding（试过，10 个全偏）。
+    // `offsetLeft`/`offsetTop` 的定义就是「相对 offsetParent 的边框盒偏移」，
+    // 而绝对定位元素的 `left`/`top` 也是相对包含块边框盒的偏移——两者天然对齐。
+    //
+    // 唯一的误差来源是 `offsetParent` 与「CSS 包含块」不是同一个元素：前者要求祖先
+    // `position !== static`，与包含块的定义一致；找不到时 `offsetParent` 是 `<body>`，
+    // 也正好落在初始包含块内。所以这个近似是可靠的。
+    if (svg.offsetParent) {
+      icon.style.left = `${svg.offsetLeft}px`;
+      icon.style.top = `${svg.offsetTop}px`;
+    }
+    icon.innerHTML = `<g transform="${ICON_ZOOM_TRANSFORM}">`
       + PHASE_ICON_INNER[phase] + "</g>";
+
+    // 插在原版**后面**（不是前面）：绝对定位元素会画在静态流内容之上，
+    // 位置对，而且不会打乱 React 维护的子节点顺序。
+    svg.after(icon);
+    return icon;
   }
 
   /**
@@ -961,13 +1043,21 @@
   const ICON_SELECTOR = 'svg[viewBox="0 0 14 14"]';
 
   /**
-   * 已经处理过的阶段图标，用 `data-prz` 自己标出来。
+   * 原版图标：**保持原样**，只加一个数据标记。
    *
-   * 这个选择器是给「组内计数」用的前身：替换会把 viewBox 改成 24 网格，于是图标
-   * 从 ICON_SELECTOR 里消失——如果一边替换一边 `querySelectorAll`，同组里后面的
-   * 图标序号会往前漂，整组认错。详见 `scanPhaseIcons` 的说明。
+   * 与 `INJECTED_ICON_SELECTOR` 共用同一个 `data-prz*` 前缀，是因为 `groupFans`
+   * 要按源码顺序把它们排在一起；两者都算「这个组里的一个阶段图标」，顺序不能乱。
    */
-  const PATCHED_ICON_SELECTOR = "svg[data-prz]";
+  const ORIGINAL_MARK = "data-prz-src";
+
+  const ORIGINAL_ICON_SELECTOR = `svg[${ORIGINAL_MARK}]`;
+
+  /**
+   * 我们注入的那个 SVG —— 负责显示，完全归我们所有。
+   *
+   * `data-prz` 的值是阶段名，顺带成了「已处理」的凭据。
+   */
+  const INJECTED_ICON_SELECTOR = "svg[data-prz]";
 
   /**
    * `typeof SVGElement` 那半句是给 Node 单测用的：脚本在没有 DOM 时也会被加载
@@ -978,7 +1068,7 @@
     return typeof SVGElement === "function"
       && node instanceof SVGElement
       && node.getAttribute("viewBox") === "0 0 14 14"
-      && !node.hasAttribute("data-prz");
+      && !node.hasAttribute(ORIGINAL_MARK);
   }
 
   // ── 认出每个 SVG 是哪个阶段 ──────────────────────────────────────────────
@@ -1054,13 +1144,18 @@
    * 宁可放过也不猜错——猜错会把某个阶段的图标画到另一个阶段上。
    */
   /**
-   * 这个组里所有阶段图标，**按源码顺序**。已替换的和还没替换的都要算进去。
+   * 这个组里所有阶段图标，**按源码顺序**。
    *
-   * 两边的并集是必须的：替换会把 viewBox 改成 24 网格，只查 ICON_SELECTOR 的话，
-   * 同一个组里已经换过的图标就不见了，后面图标的序号会整体前移。
+   * 只数**原版**节点，一个阶段恰好一个，所以序号与源码顺序一一对应。
+   *
+   * 曾经把注入节点也算进来，那是个 bug：一个 3 个阶段的容器会变成 6 个「扇区」，
+   * 组识别（按组内数量区分左右两条 HUD）直接认不出来，自愈路径因此失效。
+   * 旧实现里「已替换的也要算」是因为替换把 viewBox 改成了 24 网格、图标从
+   * `ICON_SELECTOR` 里消失了；现在替换是旁挂的，原版**始终留在原地**，
+   * 这个问题自然不存在了。
    */
   function groupFans(groupElement) {
-    return Array.from(groupElement.querySelectorAll(`${ICON_SELECTOR}, ${PATCHED_ICON_SELECTOR}`));
+    return Array.from(groupElement.querySelectorAll(`${ICON_SELECTOR}, ${ORIGINAL_ICON_SELECTOR}`));
   }
 
   /**
@@ -1239,9 +1334,8 @@
     for (const [icon, phase] of planned) {
       try {
         if (!icon.isConnected) continue; // 识别到替换之间被卸载了
+        // 标记由 patchIcon 负责打（它要先标记再注入，避免注入失败时被反复重试）。
         patchIcon(icon, phase);
-        // 标记留到最后打：它是「已处理」的凭据，中途抛错就不该留下它。
-        icon.setAttribute("data-prz", phase);
       } catch (error) {
         if (debug()) console.warn("[phase-rs-zh] 阶段图标替换失败", error);
       }
@@ -1265,11 +1359,32 @@
     const observer = new MutationObserver((records) => {
       let relevant = false;
       for (const record of records) {
+        // 路径 A：**原版图标节点被挂进来**（组件 remount）。
+        //
+        // 这里必须 `preventDefault()`：remount 时 React 生成的是**新的** React 元素，
+        // 于是会老老实实插入一个新的 DOM 节点；但如果我们放它进来、由扫描去加标记，
+        // 万一 React 之后复用/校验这个节点，我们加的那个属性就成了一份它不知道的
+        // 差异。取消这次插入等于告诉 React「这次没插成」，它会去插入自己的下一个候选
+        // ——正是我们想要的「把控制权交回 React」。
         for (const node of Array.from(record.addedNodes)) {
-          if (node instanceof SVGElement && isUnpatchedIcon(node)) { relevant = true; break; }
+          if (node instanceof SVGElement && isUnpatchedIcon(node)) {
+            record.preventDefault();
+            relevant = true;
+            break;
+          }
           // 新挂进来的可能是一整棵子树（比如组件卸载重建、抽屉打开），
           // 里面照样可能有阶段图标。
-          if (node instanceof Element && node.querySelector(ICON_SELECTOR)) { relevant = true; break; }
+          if (node instanceof Element
+            && (node.querySelector(ICON_SELECTOR) || node.querySelector(ORIGINAL_ICON_SELECTOR))) {
+            relevant = true;
+            break;
+          }
+        }
+        if (relevant) break;
+        // 路径 B：**我们注入的节点被删了**。原版还在（只是 visibility: hidden），
+        // 重新注入一次就能自愈——比如 React 按子节点顺序做了一次重排。
+        for (const node of Array.from(record.removedNodes)) {
+          if (node instanceof SVGElement && node.hasAttribute("data-prz")) { relevant = true; break; }
         }
         if (relevant) break;
       }
@@ -1282,6 +1397,15 @@
       // （`services/telemetryEvents.ts`），在界面上就表现为「游戏崩溃」。我们的代码
       // 不该有任何路径能把异常泄漏到那个层面。
       try {
+        // 先把「已标记但注入节点已不在」的原版放开，让它们有机会被重新注入。
+        // 正常情况下这一步什么也不做（标记与注入节点总是成对存在）。
+        for (const original of document.querySelectorAll(ORIGINAL_ICON_SELECTOR)) {
+          const injected = original.nextElementSibling;
+          if (!injected || !injected.hasAttribute("data-prz")) {
+            original.removeAttribute(ORIGINAL_MARK);
+            original.style.visibility = "";
+          }
+        }
         scanPhaseIcons();
       } catch (error) {
         if (debug()) console.warn("[phase-rs-zh] 阶段图标扫描失败", error);
@@ -1380,11 +1504,15 @@
     iconInner: PHASE_ICON_INNER,
     text: PHASE_TEXT,
     selector: ICON_SELECTOR,
+    originalSelector: ORIGINAL_ICON_SELECTOR,
+    injectedSelector: INJECTED_ICON_SELECTOR,
+    originalMark: ORIGINAL_MARK,
     viewBox: ICON_VIEW_BOX,
     zoom: ICON_ZOOM,
     strokeWidth: ICON_STROKE_WIDTH,
     zoomTransform: ICON_ZOOM_TRANSFORM,
     patchIcon,
+    originalMark: ORIGINAL_MARK,
     originalSvgAttrs,
     isUnpatchedIcon,
     groupFans,

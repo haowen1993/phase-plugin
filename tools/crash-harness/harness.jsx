@@ -6,6 +6,33 @@ import { createRoot } from "react-dom/client";
 new Function(__CONTENT_SOURCE__).call(globalThis);
 const I = globalThis.__phaseZhPhaseIcons;
 
+// 这个页面**没有 Tailwind**，而我们要验证的正是「注入的图标与原版同位同尺寸」——
+// 没有 CSS 就无从验证。所以在这里补上我们用到的那些工具类的最小模拟。
+// 另外：行内 <svg> 若没有 width/height 属性，在浏览器里是 **0×0**（与 <img> 那种
+// 替换元素不同），平时能显示全靠这些类撑着——所以这段 CSS 不是可选项。
+// 用属性选择器而不是类选择器：Tailwind 的类名里有 `.` 和 `/`，在 CSS 里要转义成
+// `\\.` 和 `\\/`，再嵌进 JS 模板字符串还要再转义一层——很容易写错又难发现。
+// `[class~="h-2.5"]` 完全避开转义，语义也直白。
+const HARNESS_CSS = [
+  '[class~="h-2.5"]{height:10px}', '[class~="w-2.5"]{width:10px}',
+  '[class~="lg:h-3.5"]{height:14px}', '[class~="lg:w-3.5"]{width:14px}',
+  '[class~="h-3"]{height:12px}', '[class~="w-3"]{width:12px}',
+  '[class~="h-4"]{height:16px}', '[class~="w-4"]{width:16px}',
+  '[class~="h-6"]{height:24px}', '[class~="w-6"]{width:24px}',
+  '.hidden{display:none}', '.relative{position:relative}', '.flex{display:flex}',
+  // 按钮在真实 phase.rs 里是固定的 24px 方框（`h-6 w-6` + flex 居中）。
+  // 这个宽度必须补上：否则按钮会被 flex-shrink 压窄，原版 SVG（参与收缩）变得
+  // 比注入节点（绝对定位、不参与收缩）更窄，量出来是假的「尺寸差」。
+  '[class~="h-6"][class~="w-6"]{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}',
+  '[class~="h-6"][class~="w-6"]>svg{flex:0 0 auto}',
+].join('');
+if (!document.getElementById("harness-css")) {
+  const style = document.createElement("style");
+  style.id = "harness-css";
+  style.textContent = HARNESS_CSS;
+  document.head.append(style);
+}
+
 const OUT = [];
 const log = (s) => { OUT.push(s); const el = document.getElementById("out"); if (el) el.textContent = OUT.join("\n"); };
 
@@ -130,6 +157,37 @@ function main() {
           + " / 24x24=" + document.querySelectorAll('svg[viewBox="0 0 24 24"]').length
           + " / 按钮=" + document.querySelectorAll("button").length);
       }
+    }
+    // 视觉验证：注入的图标必须与原版**同位同尺寸**。
+    //
+    // 这一条是靠真浏览器才查得出来的：无头测试环境不做布局，量什么都是 0。
+    // 它抓到过两个真问题——(1) 先隐藏再量尺寸，导致量到 0（图标整个消失）；
+    // (2) 绝对定位的静态位置与 flex 居中的原版不重合，出现横向偏移。
+    {
+      const originals = Array.from(document.querySelectorAll("svg[data-prz-src]"));
+      const problems = [];
+      for (const original of originals) {
+        const injected = original.nextElementSibling;
+        const name = original.getAttribute("data-prz-src");
+        if (!injected || !injected.hasAttribute("data-prz")) {
+          problems.push(name + " 缺注入节点");
+          continue;
+        }
+        const a = original.getBoundingClientRect();
+        const b = injected.getBoundingClientRect();
+        const dx = Math.abs(a.left - b.left);
+        const dy = Math.abs(a.top - b.top);
+        const dw = Math.abs(a.width - b.width);
+        const dh = Math.abs(a.height - b.height);
+        if (dx > 0.5 || dy > 0.5 || dw > 0.5 || dh > 0.5) {
+          problems.push(name + " 偏移 " + dx.toFixed(1) + "," + dy.toFixed(1)
+            + " 尺寸差 " + dw.toFixed(1) + "," + dh.toFixed(1)
+            + " | 原版(" + a.left.toFixed(1) + "," + a.top.toFixed(1) + ") 注入("
+            + b.left.toFixed(1) + "," + b.top.toFixed(1) + ")");
+        }
+      }
+      log("4.5) 视觉核对：原版 " + originals.length + " 个，错位/缺注入 " + problems.length + " 个");
+      problems.slice(0, 5).forEach((p) => log("     " + p));
     }
     log("5) window 捕获到的异常数 = " + window.__errors.length);
     window.__errors.slice(0, 2).forEach((e) => log("   " + e.split("\n").slice(0, 3).join(" | ")));

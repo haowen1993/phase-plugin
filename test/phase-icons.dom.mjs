@@ -252,7 +252,7 @@ describe("阶段图标：识别每一个阶段", () => {
 });
 
 describe("阶段图标：替换本身", () => {
-  it("替换后 viewBox 变成 24 网格，并带上描边式图标的属性", () => {
+  it("注入的 svg 是 24 网格、描边式", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
     const svg = iconOf("Draw");
@@ -262,10 +262,86 @@ describe("阶段图标：替换本身", () => {
     expect(svg.getAttribute("stroke-width")).toBe("2");
   });
 
-  it("尺寸类被保留——响应式与激活变色都靠它", () => {
+  /**
+   * 这一组守的是**最重要的不变量**：替换必须是「只读 + 旁挂」。
+   *
+   * 之前是就地改那个 `<svg>`（设 viewBox、`innerHTML =` 换子节点），会把 React
+   * 记账的 `<path>`/`<circle>` 从 DOM 里摘掉。用户报的崩溃（玩一会儿切换阶段时
+   * 出现 phase.rs 的 ErrorBoundary 兜底页、每次都复现）与这个动作吻合。
+   *
+   * 所以这里断言：**原版节点一个属性、一个子节点都不能变**。
+   */
+  it("原版 svg 不被改动：class 与子节点完整保留，只加了数据标记", () => {
+    mount(playerHud());
+    // 定位到 Draw 那一个（hud 里第一个原版是 Upkeep）
+    const original = document.querySelectorAll('svg[viewBox="0 0 14 14"]')[1];
+    const kidsBefore = original.children.length;
+    const pathBefore = original.innerHTML;
+
+    // 只拿一个来测，避免整轮扫描把别的阶段也改掉造成干扰
+    const only = { ...icons(), identifyPhase: () => "Draw" };
+    globalThis.__phaseZhPhaseIcons.scanPhaseIcons();
+
+    // viewBox 还是 14 网格 —— 没被改成 24
+    expect(original.getAttribute("viewBox")).toBe("0 0 14 14");
+    // 尺寸类还在原版上（没有搬到别处）
+    expect(original.getAttribute("class")).toBe("h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
+    // 子节点一个不少、内容一模一样
+    expect(original.children.length).toBe(kidsBefore);
+    expect(original.innerHTML).toBe(pathBefore);
+    // 只多了一个数据标记
+    expect(original.getAttribute("data-prz-src")).toBe("Draw");
+  });
+
+  it("原版被藏起来但仍占位（visibility，不是 display）", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
-    expect(iconOf("Draw").getAttribute("class")).toBe("h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
+    const original = document.querySelector('svg[viewBox="0 0 14 14"]');
+    // 必须是 visibility：display:none 会让它退出布局，按钮里其它兄弟会跑位
+    expect(original.style.visibility).toBe("hidden");
+    expect(original.style.display).toBe("");
+  });
+
+  it("注入的 svg 是原版的兄弟节点，且绝对定位覆盖在原位", () => {
+    mount(playerHud());
+    icons().scanPhaseIcons();
+    const original = document.querySelectorAll('svg[viewBox="0 0 14 14"]')[1]; // Draw
+    const injected = iconOf("Draw");
+    expect(injected.parentElement).toBe(original.parentElement);
+    expect(injected.previousElementSibling).toBe(original);
+    expect(injected.style.position).toBe("absolute");
+    // visibility 会继承，所以注入节点必须显式设回 visible
+    expect(injected.style.visibility).toBe("visible");
+    // 不拦点击
+    expect(injected.style.pointerEvents).toBe("none");
+  });
+
+  it("尺寸靠照抄 class，不写内联宽高（不依赖布局，无头环境也能注入）", () => {
+    mount(playerHud());
+    // happy-dom 不做布局，getBoundingClientRect 返回 0——正因为不靠它，注入照样成立
+    icons().scanPhaseIcons();
+    const injected = iconOf("Draw");
+    expect(injected).not.toBeNull();
+    expect(injected.getAttribute("class")).toBe("h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
+    // 不写内联宽高：注入节点与原版 class 相同、同父容器，CSS 对两者结果必然一致
+    expect(injected.style.width).toBe("");
+    expect(injected.style.height).toBe("");
+    expect(injected.getAttribute("width")).toBeNull();
+  });
+
+  it("位置实测锚定：用 offsetLeft/offsetTop，不靠静态位置", () => {
+    mount(playerHud());
+    const original = document.querySelectorAll('svg[viewBox="0 0 14 14"]')[1]; // Draw
+    // 模拟「原版在一个定位祖先里，偏了若干像素」
+    Object.defineProperty(original, "offsetLeft", { value: 7, configurable: true });
+    Object.defineProperty(original, "offsetTop", { value: 3, configurable: true });
+    Object.defineProperty(original, "offsetParent", { value: document.body, configurable: true });
+    icons().scanPhaseIcons();
+    const injected = iconOf("Draw");
+    // 绝对定位元素的静态位置在 flex 容器里与原版不重合（实测偏过 3.7px），
+    // 所以位置必须显式锚定。
+    expect(injected.style.left).toBe("7px");
+    expect(injected.style.top).toBe("3px");
   });
 
   it("两个主阶段是「方框带数字」的现成图标，且互不相同", () => {
@@ -336,17 +412,34 @@ describe("阶段图标：幂等与重渲染", () => {
   it("React 换掉整个 svg 节点时，MutationObserver 会补上", async () => {
     mount(playerHud());
     icons().scanPhaseIcons();
+    // 模拟组件卸载重建：注入节点与原版一起被换掉，新的原版图标进来
     const old = iconOf("Draw");
-    const button = old.closest("button");
-    // 模拟组件卸载重建：原节点被移除，新的原版图标进来
+    const oldOriginal = document.querySelectorAll('svg[viewBox="0 0 14 14"]')[1];
     const fresh = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     fresh.setAttribute("viewBox", "0 0 14 14");
     fresh.setAttribute("class", "h-2.5 w-2.5 lg:h-3.5 lg:w-3.5");
     fresh.innerHTML = originalIconMarkup("Draw");
-    old.replaceWith(fresh);
+    oldOriginal.replaceWith(fresh);
+    old.remove();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(fresh.getAttribute("data-prz")).toBe("Draw");
-    expect(fresh.getAttribute("viewBox")).toBe("0 0 24 24");
+    // 新契约：原版保持 14 网格、只多一个标记，注入的是它的下一个兄弟
+    expect(fresh.getAttribute("data-prz-src")).toBe("Draw");
+    expect(fresh.getAttribute("viewBox")).toBe("0 0 14 14");
+    expect(fresh.nextElementSibling.getAttribute("data-prz")).toBe("Draw");
+    expect(fresh.nextElementSibling.getAttribute("viewBox")).toBe("0 0 24 24");
+  });
+
+  it("注入节点被删掉但原版还在时，会自愈重新注入", async () => {
+    mount(playerHud());
+    icons().scanPhaseIcons();
+    const injected = iconOf("Draw");
+    const parent = injected.parentElement;
+    injected.remove();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 自愈：原版上的标记被放开，重新注入一个
+    const again = iconOf("Draw");
+    expect(again).not.toBeNull();
+    expect(again.parentElement).toBe(parent);
   });
 
   it("新挂进来的容器整棵消失再回来，图标仍会被补上", async () => {

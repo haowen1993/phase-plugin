@@ -1,12 +1,13 @@
 {
   "name": "phase-rs-zh",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "type": "module",
   "description": "一个书签小工具：把 phase.rs 网页版的卡图换成大学院废墟（mtgch.com）的简体中文图，并把回合阶段图标换成公开图标库的图形。",
   "license": "MIT",
   "scripts": {
     "build": "node tools/build-bookmarklet.mjs",
+    "build:preview": "node tools/build-icon-preview.mjs",
     "test": "node --test test/content.test.mjs",
     "test:dom": "vitest run",
     "check:live": "node tools/check-live.mjs",

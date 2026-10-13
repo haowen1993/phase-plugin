@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.5.0";
+  const VERSION = "1.6.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";

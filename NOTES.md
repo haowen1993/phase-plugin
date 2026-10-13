@@ -387,6 +387,36 @@ sudo chown -R $(id -u):$(id -g) ~/.npm # 或者根治那个缓存目录的属主
 随机红绿。探测结果本身有 30 秒缓存（真实使用里这是省请求的关键），所以 `setProbe` 会
 顺手清掉缓存，否则用例之间会串味。
 
+### 图标对照页怎么重建
+
+```bash
+npm run build:preview
+```
+
+产出两份：
+
+- `docs/icon-comparison.png` —— README 里内联的那张对照表（GitHub 直接渲染图片）
+- `preview/current-icons.html` —— 交互页，多出 10px 与激活态、以及「按真实阶段栏排列」
+
+**原版图标是从 phase.rs 源码里解析的**，不手抄：读
+`<phase.rs>/client/src/components/controls/PhaseStopBar.tsx` 的 `PHASE_ICONS`。所以需要
+一个 phase.rs 克隆，路径按 `$PHASE_RS_DIR` → `../phase` → `../phase.rs` → `~/phase` 的顺序找，
+找不到会明确失败。手抄一份进本仓库会随上游改动悄悄过时，不如要不到就报错。
+
+两处必须注意：
+
+1. **JSX 属性名要转成 SVG 属性名**（`strokeWidth` → `stroke-width`）。源码是 TSX，
+   直接把 JSX 塞进 HTML 的话描边宽度完全不生效，原版图标会全画成细线。
+2. **标记必须在 Node 侧拼好，不能把函数源码塞进页面。** 踩过一次：把 `svNew` 的函数
+   源码内联进页面，而它的函数体引用了 `icons.viewBox`——`icons` 只存在于 Node 侧，浏览器
+   里抛 `ReferenceError` 让整段脚本挂掉，页面渲染出来只有表头、正文全空。而且那个失败
+   很像「截图时机不对」，容易往错的方向查。
+
+截图那块也踩过两个坑，都写进脚本注释了：`--screenshot` 只截窗口大小（给大了留空白、
+给小了裁内容），所以改成**先用 `--dump-dom` 量出页面实际尺寸、再按尺寸截**；另外
+Chrome 可能在内容画完之前就落盘，但那次实测的根因其实是上面的 `ReferenceError`，
+不是时机问题。
+
 ### 手动验收
 
 1. 打开 <https://phase-rs.dev>，进入一局游戏或打开牌组。
@@ -517,7 +547,10 @@ phase-rs-zh/
 │   └── phase-rs-zh.bookmarklet.js          未编码的压缩正文（供审阅）
 ├── docs/
 │   ├── index.html                          GitHub Pages 入口，与 dist/install.html 逐字节相同
+│   ├── icon-comparison.png                 README 内联的图标对照表（由 build:preview 生成）
 │   └── .nojekyll                           让 Pages 跳过 Jekyll 处理
+├── preview/
+│   └── current-icons.html                  交互式图标对照页（由 build:preview 生成）
 ├── test/
 │   ├── content.test.mjs                    零依赖：卡图纯逻辑 + 产物同源/等价校验
 │   ├── phase-icons.test.mjs                零依赖：图标数据、字形几何、绘制指令
@@ -525,6 +558,8 @@ phase-rs-zh/
 │   └── phase-icons.dom.mjs                 DOM 装配测试：阶段图标的识别与替换
 ├── tools/
 │   ├── build-bookmarklet.mjs               从 src/content.js 生成上面那些产物
+│   ├── build-icon-preview.mjs              生成图标对照图与交互页（需要本地 Chrome）
+│   ├── check-icon-fits.mjs                 量图标放大后有没有超出画布（需要本地 Chrome）
 │   ├── check-live.mjs                      对真实图床核对三级阶梯
 │   └── check-app-data-coverage.mjs         用 phase.rs 的数据核对 URL 识别覆盖率
 └── package.json  vitest.config.mjs         仅 DOM 测试需要

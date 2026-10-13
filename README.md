@@ -44,10 +44,11 @@
 | 抓牌 | 卡牌 | | 战斗结束 | 三角旗 |
 | 第一主阶段 | 方框 `1` | | 第二主阶段 | 方框 `2` |
 | 战斗开始 | 交叉双剑 | | 结束步骤 | 沙漏 |
-| 宣告攻击者 | 单手剑 | | 清理 | 扫帚 |
+| 宣告攻击者 | 单手剑 | | 清理 | 刷子 |
 
-图形来自 [Lucide](https://lucide.dev)（ISC 许可）与 [Tabler Icons](https://tabler.io/icons)
-（MIT 许可），两者都可以跟着本项目一起再分发，所以下面的 MIT 许可是干净的。
+图形全部来自 **[Tabler Icons](https://tabler.io/icons)**（MIT 许可）——刻意只用一个库，
+这样只需要遵守一份许可。版权声明与许可全文见
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ## 常见问题
 
@@ -68,7 +69,12 @@
 ## 许可
 
 代码用 [MIT](LICENSE)——随便用、改、再发，保留版权声明即可。
-阶段图标来自 Lucide（ISC）与 Tabler Icons（MIT），同样是宽松许可，可一并再分发。
+
+阶段图标来自 [Tabler Icons](https://tabler.io/icons)（MIT），可一并再分发。
+第三方资产的版权声明与许可全文见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
+**卡图不在本仓库的许可范围内**：本工具不复制、不缓存、不再分发任何卡图，只在显示时把
+浏览器指向大学院废墟的图床。
 
 **卡图不在这份许可范围内**：它们由大学院废墟（[mtgch.com](https://mtgch.com)）提供，
 本工具只在显示时把浏览器指向那个图床，不复制、不缓存、不再分发。

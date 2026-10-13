@@ -1,0 +1,54 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>当前在用的 12 个阶段图标</title><style>
+ body{margin:0;padding:22px;background:#060b16;color:#e2e8f0;font:13px/1.65 -apple-system,"PingFang SC",sans-serif}
+ h1{font-size:17px;margin:0 0 4px}
+ .sub{color:#64748b;font-size:12px;margin-bottom:6px}
+ .sub b{color:#7dd3fc}
+ .badge{display:inline-block;margin-bottom:20px;padding:3px 9px;border-radius:99px;font-size:11px;
+        background:#064e3b;color:#6ee7b7;border:1px solid #047857}
+ h2{font-size:12px;color:#7dd3fc;margin:24px 0 8px;font-weight:600}
+ table{border-collapse:collapse;width:100%}
+ th,td{border-top:1px solid #1e293b;padding:8px 10px;text-align:left;vertical-align:middle}
+ th{color:#64748b;font-size:10px;font-weight:600;font-family:ui-monospace,monospace;border-top:1px solid #334155}
+ td.n{color:#475569;font-family:ui-monospace,monospace;font-size:11px;width:26px}
+ td.zh{font-weight:600;white-space:nowrap}
+ td.en{color:#475569;font-family:ui-monospace,monospace;font-size:11px;white-space:nowrap}
+ td.src{font-family:ui-monospace,monospace;font-size:11px;color:#7dd3fc;white-space:nowrap}
+ td.where{color:#64748b;font-size:11px;white-space:nowrap}
+ .icons{display:flex;align-items:flex-end;gap:14px}
+ .bar{display:flex;gap:2px;background:#020617cc;border:1px solid #ffffff1a;border-radius:10px;padding:4px 6px;width:max-content}
+ .btn{display:flex;align-items:center;justify-content:center;border-radius:7px;border:1px solid transparent;color:#64748b}
+ .btn.on{border-color:#67e8f977;background:#083344d1;color:#fff}
+ .cap{font-size:9px;color:#475569;font-family:ui-monospace,monospace;text-align:center;margin-top:4px}
+ .cap.l{text-align:left;margin:0 0 5px}
+ .note{margin-top:26px;padding:12px 14px;border-left:2px solid #0e7490;background:#0b1626;
+       font-size:12px;color:#94a3b8;border-radius:0 6px 6px 0}
+ .note b{color:#e2e8f0}
+</style></head><body>
+<h1>当前在用的 12 个阶段图标</h1>
+<div class="sub">全部来自 <b>Tabler Icons</b>（MIT 许可）· 统一内容放大 <b>1.15×</b> · 手机端图标 <b>10px</b>、桌面端 <b>14px</b></div>
+<div class="badge">单一图标库 · 只需遵守一份许可</div>
+<h2>逐条清单</h2>
+<table><thead><tr><th>#</th><th>阶段</th><th>图标（10px / 14px / 激活）</th><th>出处</th><th>出现在</th></tr></thead>
+<tbody id="tb"></tbody></table>
+<h2>按真实阶段栏排列</h2>
+<div id="bars"></div>
+<div class="note"><b>说明：</b>出处即 Tabler 的文件名，可到
+<a href="https://tabler.io/icons" style="color:#7dd3fc">tabler.io/icons</a> 按名检索。
+版权声明与许可全文在仓库根的 <code>THIRD-PARTY-NOTICES.md</code>。
+「出现在」只列主要位置——手机端打开<b>阶段停止抽屉</b>时 12 个会全部一起出现。</div>
+<script>
+const R=[{"i":1,"phase":"Untap","zh":"重置步骤","src":"tabler/rotate-clockwise","where":"手机操作行","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5\" />","note":""},{"i":2,"phase":"Upkeep","zh":"维持步骤","src":"tabler/settings","where":"HUD 左条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065\" /> <path d=\"M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\" />","note":""},{"i":3,"phase":"Draw","zh":"抓牌步骤","src":"tabler/play-card","where":"HUD 左条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M19 5v14a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2\" /> <path d=\"M8 6h.01\" /> <path d=\"M16 18h.01\" /> <path d=\"M12 16l-3 -4l3 -4l3 4l-3 4\" />","note":""},{"i":4,"phase":"PreCombatMain","zh":"战斗前主阶段","src":"tabler/square-number-1","where":"HUD 左条","inner":"<path d=\"M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14\" /> <path d=\"M10 10l2 -2v8\" />","note":""},{"i":5,"phase":"BeginCombat","zh":"战斗开始步骤","src":"tabler/swords","where":"战斗条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M21 3v5l-11 9l-4 4l-3 -3l4 -4l9 -11l5 0\" /> <path d=\"M5 13l6 6\" /> <path d=\"M14.32 17.32l3.68 3.68l3 -3l-3.365 -3.365\" /> <path d=\"M10 5.5l-2 -2.5h-5v5l3 2.5\" />","note":""},{"i":6,"phase":"DeclareAttackers","zh":"宣告攻击者步骤","src":"tabler/sword","where":"战斗条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M20 4v5l-9 7l-4 4l-3 -3l4 -4l7 -9l5 0\" /> <path d=\"M6.5 11.5l6 6\" />","note":""},{"i":7,"phase":"DeclareBlockers","zh":"宣告阻挡者步骤","src":"tabler/shield","where":"战斗条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3\" />","note":""},{"i":8,"phase":"CombatDamage","zh":"战斗伤害步骤","src":"tabler/flame","where":"战斗条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 10.941c2.333 -3.308 .167 -7.823 -1 -8.941c0 3.395 -2.235 5.299 -3.667 6.706c-1.43 1.408 -2.333 3.294 -2.333 5.588c0 3.704 3.134 6.706 7 6.706c3.866 0 7 -3.002 7 -6.706c0 -1.712 -1.232 -4.403 -2.333 -5.588c-2.084 3.353 -3.257 3.353 -4.667 2.235\" />","note":""},{"i":9,"phase":"EndCombat","zh":"战斗结束步骤","src":"tabler/flag-3","where":"战斗条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M5 14h14l-4.5 -4.5l4.5 -4.5h-14v16\" />","note":""},{"i":10,"phase":"PostCombatMain","zh":"战斗后主阶段","src":"tabler/square-number-2","where":"HUD 右条","inner":"<path d=\"M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14\" /> <path d=\"M10 8h3a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-2a1 1 0 0 0 -1 1v2a1 1 0 0 0 1 1h3\" />","note":""},{"i":11,"phase":"End","zh":"结束步骤","src":"tabler/hourglass","where":"HUD 右条","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M6.5 7h11\" /> <path d=\"M6.5 17h11\" /> <path d=\"M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1\" /> <path d=\"M6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0 -1 -1h-10a1 1 0 0 0 -1 1\" />","note":""},{"i":12,"phase":"Cleanup","zh":"净化步骤","src":"tabler/brush","where":"手机操作行","inner":"<path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M3 21v-4a4 4 0 1 1 4 4h-4\" /> <path d=\"M21 3a16 16 0 0 0 -12.8 10.2\" /> <path d=\"M21 3a16 16 0 0 1 -10.2 12.8\" /> <path d=\"M10.6 9a9 9 0 0 1 4.4 4.4\" />","note":"Tabler 没有 broom，用 brush（刷子）"}], BARS=[["HUD 左条",["Upkeep","Draw","PreCombatMain"]],["战斗条",["BeginCombat","DeclareAttackers","DeclareBlockers","CombatDamage","EndCombat"]],["HUD 右条",["PostCombatMain","End"]],["手机操作行",["Untap","Upkeep","Draw","PreCombatMain","BeginCombat","DeclareAttackers","DeclareBlockers","CombatDamage","EndCombat","PostCombatMain","End","Cleanup"]]], Z=1.15;
+const sv=(inner,px)=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="'+px+'" height="'+px+'">'+inner+'</svg>';
+const wrap=c=>'<g transform="translate(12 12) scale('+Z+') translate(-12 -12)">'+c+'</g>';
+const btn=(c,px,on)=>'<div class="btn'+(on?' on':'')+'" style="width:'+(px>10?32:24)+'px;height:'+(px>10?32:24)+'px">'+sv(wrap(c),px)+'</div>';
+document.getElementById('tb').innerHTML=R.map(r=>
+  '<tr><td class="n">'+r.i+'</td><td class="zh">'+r.zh+'<div class="en">'+r.phase+'</div></td>'
+  +'<td><div class="icons"><div><div class="bar">'+btn(r.inner,10,false)+'</div><div class="cap">10px</div></div>'
+  +'<div><div class="bar">'+btn(r.inner,14,false)+'</div><div class="cap">14px</div></div>'
+  +'<div><div class="bar">'+btn(r.inner,14,true)+'</div><div class="cap">激活</div></div></div></td>'
+  +'<td class="src">'+r.src+'</td><td class="where">'+r.where+(r.note?'<div class="en">'+r.note+'</div>':'')+'</td></tr>').join('');
+const byPhase=p=>R.find(r=>r.phase===p).inner;
+document.getElementById('bars').innerHTML=BARS.map(([label,list])=>
+  '<div style="margin-bottom:14px"><div class="cap l">'+label+'（'+list.length+' 个）</div>'
+  +'<div class="bar">'+list.map(p=>btn(byPhase(p),14,false)).join('')+'</div></div>').join('');
+</script></body></html>

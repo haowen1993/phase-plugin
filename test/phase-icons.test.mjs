@@ -61,11 +61,13 @@ test("12 个阶段都有文案与描述（多一个少一个都会让交叉校�
   assert.equal(Object.keys(text).length, EXPECTED_PHASES.length);
 });
 
-test("12 个阶段都有图标出处，且只来自 Lucide 与 Tabler", () => {
+test("12 个阶段都有图标出处，且**全部**来自 Tabler", () => {
   for (const phase of EXPECTED_PHASES) {
     const source = iconSource[phase];
     assert.ok(source, `${phase} 缺少图标出处`);
-    assert.match(source, /^(lucide|tabler)\/.+/, `${phase} 的出处不是这两个库：${source}`);
+    // 锁死到 Tabler 一家：这样只需要遵守一份许可（MIT），不必同时跟 Lucide 的 ISC。
+    // 之前混用过 Lucide，换掉就是为了让许可面收窄——这条断言守住那个决定。
+    assert.match(source, /^tabler\/.+/, `${phase} 的出处不是 Tabler：${source}`);
   }
   assert.equal(Object.keys(iconSource).length, EXPECTED_PHASES.length);
 });

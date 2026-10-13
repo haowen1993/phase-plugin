@@ -126,12 +126,15 @@ fetch、被 CSP 拦、5xx、超时）→ 按存在处理，重试一次再降级
 
 **不自己画。** 12 个图标全部取自两个宽松许可的图标库：
 
-| 库 | 许可 | 用了哪些 |
-| --- | --- | --- |
-| [Lucide](https://lucide.dev) | ISC | settings / swords / sword / shield / zap / flag / hourglass / broom |
-| [Tabler Icons](https://tabler.io/icons) | MIT | rotate-clockwise / play-card / target |
+12 个图标**全部**来自 **[Tabler Icons](https://tabler.io/icons)（MIT 许可）**。
 
-ISC 与 MIT 都可以随本仓库（MIT）一起再分发，所以 `LICENSE` 不需要为图标加任何例外。
+早先混用过 Lucide（ISC）与 Tabler 两家，后来把非 Tabler 的 6 个图标全换成 Tabler 的
+对应图形，**就是为了把许可面从两份收窄到一份**。代价是「扫帚」变成了「刷子」
+（Tabler 没有 broom）。
+
+版权声明与许可全文收录在 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。MIT 允许
+再分发，所以 `LICENSE` 不需要为图标加例外；但 MIT 要求「版权声明与许可声明出现在所有
+副本中」，那份文件就是为满足这一条而存在的——**改图标时别忘了同步它**。
 
 **刻意不用 Apple 的 SF Symbols**：它的许可把使用范围限定在「运行于 Apple 系统上的
 App」，网页不在内，而本项目允许别人再分发——把它塞进来就得在 README 里写一段自己
@@ -142,17 +145,17 @@ App」，网页不在内，而本项目允许别人再分发——把它塞进�
 | 阶段 | 图形 | 出处 |
 | --- | --- | --- |
 | 重置 Untap | 顺时针环形箭头 | `tabler/rotate-clockwise` |
-| 维持 Upkeep | 齿轮 | `lucide/settings` |
+| 维持 Upkeep | 齿轮 | `tabler/settings` |
 | 抓牌 Draw | 卡牌 | `tabler/play-card` |
 | 第一主阶段 | 方框 + `1` | `tabler/square-number-1` |
-| 战斗开始 | 交叉双剑 | `lucide/swords` |
-| 宣告攻击者 | 单手剑 | `lucide/sword` |
-| 宣告阻挡者 | 盾牌 | `lucide/shield` |
+| 战斗开始 | 交叉双剑 | `tabler/swords` |
+| 宣告攻击者 | 单手剑 | `tabler/sword` |
+| 宣告阻挡者 | 盾牌 | `tabler/shield` |
 | 战斗伤害 | 火焰 | `tabler/flame` |
 | 战斗结束 | 三角旗 | `tabler/flag-3` |
 | 第二主阶段 | 方框 + `2` | `tabler/square-number-2` |
-| 结束步骤 | 沙漏 | `lucide/hourglass` |
-| 清理 Cleanup | 扫帚 | `lucide/broom` |
+| 结束步骤 | 沙漏 | `tabler/hourglass` |
+| 清理 Cleanup | 刷子 | `tabler/brush` |
 
 顺带修掉了原版的两处重复：`PreCombatMain` 与 `PostCombatMain` 原本是**同一个菱形**，
 `BeginCombat` 与 `CombatDamage` 原本都是交叉双剑（只差中心一个圆点）。
@@ -455,9 +458,13 @@ URL** 发一次 `Range: bytes=0-0` 的 `fetch`，只为读状态码（404 = 这�
 
 **阶段图标跟着 MIT 走**，因为它们的来源同样是宽松许可：
 
-- 描边式图标来自 **[Lucide](https://lucide.dev)**（ISC 许可）与
-  **[Tabler Icons](https://tabler.io/icons)**（MIT 许可）。两者都允许再分发，所以
-  12 个图形可以随本仓库一起以 MIT 分发，`LICENSE` 不需要加例外条款。
+- 12 个图标全部来自 **[Tabler Icons](https://tabler.io/icons)**（MIT 许可）。
+  MIT 允许再分发，所以这些图形可以随本仓库一起以 MIT 分发，`LICENSE` 不需要加例外条款；
+  但它要求「版权声明与许可声明出现在所有副本中」，所以仓库根有一份
+  [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) 收录完整的版权行与许可全文。
+  **改图标时要同步那份文件。**
+- 早先混用过 Lucide（ISC），为了把许可面从两份收窄到一份，非 Tabler 的 6 个图标已全部
+  换成 Tabler 的对应图形。
 - **刻意没用 Apple 的 SF Symbols**：它的许可把使用范围限定为「运行在 Apple 系统上的
   App」，网页不在内。要用就得在 README 里写一段限制，而那段限制本仓库没有资格授予
   （不是 Apple，无权转授权）。

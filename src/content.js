@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.4.1";
+  const VERSION = "1.5.0";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -800,10 +800,14 @@
   //
   // ── 图形来自公开图标库，不自己画 ────────────────────────────────────────
   //
-  //   Lucide  https://lucide.dev        ISC 许可
-  //   Tabler  https://tabler.io/icons   MIT 许可
+  //   Tabler Icons  https://tabler.io/icons   MIT 许可
   //
-  // 两者都是宽松许可，可以随本仓库（MIT）一起再分发，README 不需要额外声明。
+  // **全部 12 个都来自 Tabler 一家**，这样只需要遵守一份许可。早先混用过 Lucide（ISC），
+  // 后来把非 Tabler 的 6 个换成了 Tabler 的对应图形——收窄许可面的价值大于「扫帚」
+  // 变成「刷子」的语义损失。
+  //
+  // 版权声明与许可全文见仓库根的 THIRD-PARTY-NOTICES.md；MIT 要求它随所有副本分发，
+  // 所以改图标时要同步那份文件。
   // 这里刻意**不用** Apple 的 SF Symbols：它的许可只覆盖运行在 Apple 系统上的
   // App，网页不在范围内，而本项目允许别人再分发。
   //
@@ -826,17 +830,17 @@
    */
   const PHASE_ICON_SOURCE = {
     Untap: "tabler/rotate-clockwise",
-    Upkeep: "lucide/settings",
+    Upkeep: "tabler/settings",
     Draw: "tabler/play-card",
     PreCombatMain: "tabler/square-number-1",
-    BeginCombat: "lucide/swords",
-    DeclareAttackers: "lucide/sword",
-    DeclareBlockers: "lucide/shield",
+    BeginCombat: "tabler/swords",
+    DeclareAttackers: "tabler/sword",
+    DeclareBlockers: "tabler/shield",
     CombatDamage: "tabler/flame",
     EndCombat: "tabler/flag-3",
     PostCombatMain: "tabler/square-number-2",
-    End: "lucide/hourglass",
-    Cleanup: "lucide/broom",
+    End: "tabler/hourglass",
+    Cleanup: "tabler/brush",
   };
 
   /** 阶段顺序，必须与 phase.rs 的 PhaseStopBar.tsx / MobilePhaseChip.tsx 一致。 */
@@ -877,17 +881,17 @@
 
   const PHASE_ICON_INNER = {
     Untap: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M4.05 11a8 8 0 1 1 .5 4m-.5 5v-5h5" />',   // tabler/rotate-clockwise
-    Upkeep: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /> <circle cx="12" cy="12" r="3" />',   // lucide/settings
+    Upkeep: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" /> <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />',   // tabler/settings
     Draw: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M19 5v14a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2" /> <path d="M8 6h.01" /> <path d="M16 18h.01" /> <path d="M12 16l-3 -4l3 -4l3 4l-3 4" />',   // tabler/play-card
     PreCombatMain: '<path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14" /> <path d="M10 10l2 -2v8" />',   // tabler/square-number-1
-    BeginCombat: '<path d="m13 19 6-6" /> <path d="M14.5 17.5 3.586 6.586A2 2 0 013 5.172V3h2.172a2 2 0 011.414.586L17.5 14.5" /> <path d="m14.828 6.172 2.586-2.586A2 2 0 0118.828 3H21v2.172a2 2 0 01-.586 1.414l-2.586 2.586" /> <path d="m16 16 4 4" /> <path d="m19 21 2-2" /> <path d="m5 14 4 4" /> <path d="m5 21-2-2" /> <path d="M7.5 16.5 4 20" />',   // lucide/swords
-    DeclareAttackers: '<path d="m11 19-6-6" /> <path d="m5 21-2-2" /> <path d="m8 16-4 4" /> <path d="M9.5 17.5 20.414 6.586A2 2 0 0021 5.172V3h-2.172a2 2 0 00-1.414.586L6.5 14.5" />',   // lucide/sword
-    DeclareBlockers: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />',   // lucide/shield
+    BeginCombat: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M21 3v5l-11 9l-4 4l-3 -3l4 -4l9 -11l5 0" /> <path d="M5 13l6 6" /> <path d="M14.32 17.32l3.68 3.68l3 -3l-3.365 -3.365" /> <path d="M10 5.5l-2 -2.5h-5v5l3 2.5" />',   // tabler/swords
+    DeclareAttackers: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M20 4v5l-9 7l-4 4l-3 -3l4 -4l7 -9l5 0" /> <path d="M6.5 11.5l6 6" />',   // tabler/sword
+    DeclareBlockers: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3" />',   // tabler/shield
     CombatDamage: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M12 10.941c2.333 -3.308 .167 -7.823 -1 -8.941c0 3.395 -2.235 5.299 -3.667 6.706c-1.43 1.408 -2.333 3.294 -2.333 5.588c0 3.704 3.134 6.706 7 6.706c3.866 0 7 -3.002 7 -6.706c0 -1.712 -1.232 -4.403 -2.333 -5.588c-2.084 3.353 -3.257 3.353 -4.667 2.235" />',   // tabler/flame
     EndCombat: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M5 14h14l-4.5 -4.5l4.5 -4.5h-14v16" />',   // tabler/flag-3
     PostCombatMain: '<path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14" /> <path d="M10 8h3a1 1 0 0 1 1 1v2a1 1 0 0 1 -1 1h-2a1 1 0 0 0 -1 1v2a1 1 0 0 0 1 1h3" />',   // tabler/square-number-2
-    End: '<path d="M5 22h14" /> <path d="M5 2h14" /> <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" /> <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />',   // lucide/hourglass
-    Cleanup: '<path d="M13.5 10.5 22 2" /> <path d="M14.734 13.841a2 2 0 00-.314-2.42L12.58 9.58a2 2 0 00-2.421-.314l-7.657 4.461A1 1 0 002.3 15.3l6.403 6.403a1 1 0 001.571-.204z" /> <path d="m5 18 2-2" /> <path d="m7.699 10.7 5.602 5.601" />',   // lucide/broom
+    End: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M6.5 7h11" /> <path d="M6.5 17h11" /> <path d="M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1" /> <path d="M6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0 -1 -1h-10a1 1 0 0 0 -1 1" />',   // tabler/hourglass
+    Cleanup: '<path stroke="none" d="M0 0h24v24H0z" fill="none" /> <path d="M3 21v-4a4 4 0 1 1 4 4h-4" /> <path d="M21 3a16 16 0 0 0 -12.8 10.2" /> <path d="M21 3a16 16 0 0 1 -10.2 12.8" /> <path d="M10.6 9a9 9 0 0 1 4.4 4.4" />',   // tabler/brush
   };
 
   function patchIcon(svg, phase) {

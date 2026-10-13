@@ -10,24 +10,25 @@
  * 两件事互不相干，各自独立装配。
  *
  * ────────────────────────────────────────────────────────────────────────
- * 卡图：只在英文界面生效
+ * 卡图：中英文界面都生效（1.9.1 起）
  * ────────────────────────────────────────────────────────────────────────
  *
- * **中文界面下本脚本完全不碰卡图。** 这是刻意的设计，不是遗漏：
+ * 大学院图床只认 **Scryfall 的英文印刷 id**。而 phase.rs 在中文界面下会把地址
+ * **本地化**：`localizeImageUrl()`（`client/src/services/scryfall.ts:622`）拿英文印刷
+ * id 去查 `localeArtResolved.map`，查到就换成中文印刷的 URL。于是中文界面下渲染出来
+ * 的地址里是**中文印刷 id**——两套 id 完全不相交（实测 84393 条映射里交集只有 4 个），
+ * 直接拿去问大学院必然 404。
  *
- * phase.rs 在中文界面会给「中文印刷 id」（它自己那张 `scryfall-images.v2.zh.json`
- * 映射表的产物），而大学院图床用的是「英文印刷 id」——两套 id **完全不相交**
- * （实测 84393 条映射里交集只有 4 个）。要换算就得：
+ * 1.9.0 曾经因此只在英文界面下工作。1.9.1 解决了：**截获应用自己 fetch 的那张表**，
+ * 按 URL **精确匹配**还原出英文印刷 id。见下面「截获应用自己那张表」一节。
  *
- *   - 下载那张 33.9 MB 的映射表（线上 4 MB），而且
- *   - 它本身是**多对一**的：一个中文 id 平均被 2.07 个英文 id 指向，31% 的卡有歧义。
- *     实测「寇族验装兵」的中文版同时被 zen#21 与 gn3#14 指向，而那是**两张不同的整卡**
- *     （基本地更糟：不同系列的插画整个不一样）。
+ * 为什么不用「下载那张表再按 id 反查」：那张表是**多对一**的（上游的
+ * `same-card-localized-printing-v1` 回填算法让多个英文印刷共用一个中文印刷），按 id
+ * 反查有 31% 会**指到别的整卡**（基本地连插画都不一样）。按 URL 精确匹配没有这个
+ * 问题：表里每条记录的值就是该英文印刷的中文图 URL，也就是应用写在 `<img src>` 上的
+ * 那个字符串，命中的是唯一一条。
  *
- * 也就是说反查会**指到别的整卡**。这条路的收益（中文卡图）phase.rs 自己已经提供了，
- * 所以直接放弃，只在英文界面下工作。
- *
- * ── 英文界面下的流程 ────────────────────────────────────────────────────
+ * ── 流程 ────────────────────────────────────────────────────────────────
  *
  *   1. 认出应用写的 Scryfall 地址，从文件名取出**英文印刷 id**
  *   2. `GET https://mtgch.com/api/v1/card/{英文印刷id}/`   （实测 52~132ms，CORS 全放行）
@@ -73,7 +74,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.9.0";
+  const VERSION = "1.9.1";
   // ────────────────────────────────────────────────────────────────────────
   // 卡图：英文界面下改走大学院废墟
   // ────────────────────────────────────────────────────────────────────────
@@ -113,6 +114,8 @@
 
   /** 文件名里就是印刷 id，形状固定。 */
   const ART_FILENAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:jpg|jpeg|png|webp)$/;
+  /** 裸 UUID（不带扩展名）：应用那张表的键就是这个形状。 */
+  const PRINTING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   /** 应用只用这几种尺寸；`art_crop` 与语言无关，不处理。 */
   const FACE_SIZES = new Set(["small", "normal", "large"]);
 
@@ -233,6 +236,145 @@
     return task;
   }
 
+  // ── 截获应用自己那张「英文印刷 id → 中文印刷 id」表 ──────────────────────
+  //
+  // ## 为什么需要它
+  //
+  // phase.rs 在中文界面下会把每个卡图地址**本地化**：`localizeImageUrl()`
+  // （`client/src/services/scryfall.ts:622`）拿**英文印刷 id** 去查
+  // `localeArtResolved.map`，查到就换成中文印刷的 URL。也就是说：地址一旦渲染
+  // 出来，里面的 id 已经是**中文**的，而大学院图床只认**英文** id。
+  //
+  // 那张表是应用自己 fetch 来的：
+  //
+  //     const resp = await fetch(__SCRYFALL_IMAGES_LOCALE_URL_TEMPLATE__…);
+  //     return parseLocalizedArtMap(await resp.json());
+  //
+  // 书签在页面自己的 JS 世界里执行，所以**可以截获这个响应**——白拿一份应用正在
+  // 用的表，零额外流量。
+  //
+  // ## 为什么这不是「反查猜测」
+  //
+  // 之前试过下载那份表、按「中文 id → 若干个英文 id」反查，结果 31% 的卡会指到
+  // 别的整卡（上游的 `same-card-localized-printing-v1` 回填算法让多个英文印刷共用
+  // 一个中文印刷，基本地尤其严重）。
+  //
+  // 现在改成**按 URL 精确匹配**：表里每一条的值就是该英文印刷的中文图 URL，而那
+  // 正是应用写在 `<img src>` 上的字符串。拿它去精确匹配，命中的是**唯一一条**记录，
+  // 那条记录的**键**就是英文印刷 id。
+  //
+  //     "00006596…"(英文 ZEN#21) → faces[0].normal = "…/9a235bac….jpg?1783014248"
+  //     "540f3ddf…"(英文 GN3#14) → faces[0].normal = "…/540f3ddf….jpg?…"
+  //
+  // 两条不会撞，所以还原是**精确且唯一**的，不需要猜。
+  const LOCALIZED_URL_TO_ENGLISH = new Map();
+  const LOCALIZED_MAP_PATTERN = /scryfall-images\.[^/]*\.json(?:\?|$)/;
+  /** 表里一条记录最多有这么多尺寸/面；用来给索引设个上限。 */
+  const MAX_LOCALIZED_INDEX = 400000;
+  let localeMapCaptured = false;
+  let localeMapPromise = null;
+
+  /** 去掉查询串：应用渲染时可能带 `?<timestamp>`，也可能不带。 */
+  function urlKey(value) {
+    if (typeof value !== "string") return null;
+    const cut = value.indexOf("?");
+    const hash = value.indexOf("#");
+    let end = value.length;
+    if (cut >= 0) end = Math.min(end, cut);
+    if (hash >= 0) end = Math.min(end, hash);
+    return value.slice(0, end);
+  }
+
+  /**
+   * 把应用的表建成「本地化 URL → 英文印刷 id」。**精确匹配**，不猜。
+   */
+  function buildLocalizedIndex(payload) {
+    if (!payload || typeof payload !== "object") return 0;
+    let added = 0;
+    for (const [englishId, entry] of Object.entries(payload)) {
+      if (!PRINTING_ID.test(englishId)) continue;
+      const faces = entry?.faces;
+      if (!Array.isArray(faces)) continue;
+      for (const face of faces) {
+        if (!face || typeof face !== "object") continue;
+        for (const size of ["small", "normal", "art_crop"]) {
+          const key = urlKey(face[size]);
+          if (!key || LOCALIZED_URL_TO_ENGLISH.has(key)) continue;
+          LOCALIZED_URL_TO_ENGLISH.set(key, englishId);
+          added += 1;
+          if (LOCALIZED_URL_TO_ENGLISH.size >= MAX_LOCALIZED_INDEX) return added;
+        }
+      }
+    }
+    return added;
+  }
+
+  /**
+   * 截获 `fetch`，把应用那张表捞下来。
+   *
+   * 只截获**响应体**，不改返回值：`response.clone()` 一份给应用、一份给我们自己，
+   * 应用看到的字节完全一样。包装函数在调用时而不是装配时读 `globalThis.fetch`，
+   * 这样重复装配或与别的脚本共存时也不会把对方的包装吞掉。
+   */
+  function captureLocaleMap() {
+    if (globalThis.__phaseZhFetchPatched === true) return;
+    globalThis.__phaseZhFetchPatched = true;
+    const nativeFetch = globalThis.fetch;
+    if (typeof nativeFetch !== "function") return;
+
+    globalThis.fetch = function patchedFetch(input, init) {
+      const result = nativeFetch.call(this, input, init);
+      try {
+        const url = typeof input === "string" ? input : (input?.url ?? "");
+        if (!localeMapCaptured && LOCALIZED_MAP_PATTERN.test(url)) {
+          localeMapCaptured = true;
+          // clone 之后再读，避免消费掉应用要用的那份响应体。
+          localeMapPromise = result
+            .then((response) => (response.ok ? response.clone().json() : null))
+            .then((payload) => {
+              const added = payload ? buildLocalizedIndex(payload) : 0;
+              if (added > 0 && debug()) {
+                console.info(`[phase-rs-zh] 已截获应用的本地化表：${added} 条 URL → 英文印刷 id`);
+              }
+              return added;
+            })
+            .catch(() => null);
+        }
+      } catch { /* 截获失败不该影响应用的请求 */ }
+      return result;
+    };
+  }
+
+  /**
+   * 把一个地址还原成**英文印刷 id**（应用那张表里的键）。
+   *
+   * 不是从 id 推测，而是**用 URL 精确匹配**应用表里的记录——见上面
+   * `buildLocalizedIndex` 的说明。返回 null 表示「这不是我们认得的地址」。
+   */
+  function englishPrintingIdOf(value) {
+    // ⚠️ **顺序是关键：必须先查表。**
+    //
+    // 本地化后的地址与英文地址**形状完全一样**（都是
+    // `cards.scryfall.io/<size>/front/<a>/<b>/<uuid>.jpg`），区别只在那个 uuid 是
+    // 中文印刷的还是英文印刷的。所以 `parseScryfallImageUrl` 对两者都会成功，
+    // 一旦先走它，中文地址就会原样返回中文 id —— 大学院不认，卡图换不成。
+    // （踩过：先按形状解析，结果中文界面下等于没生效。）
+    const key = urlKey(value);
+    if (key) {
+      const fromMap = LOCALIZED_URL_TO_ENGLISH.get(key);
+      if (fromMap) return fromMap;
+    }
+    // 表里没有：那它要么是未经本地化的英文地址（id 本身就对），要么与我们无关。
+    const parsed = parseScryfallImageUrl(value);
+    return parsed ? parsed.printingId : null;
+  }
+
+  /** 这张图是不是大学的地址（已经处理过就别再动）。 */
+  function isMtgchUrl(value) {
+    return typeof value === "string" && value.includes(MTGCH_IMAGE_HOST);
+  }
+
+
   // ── 换地址 ──────────────────────────────────────────────────────────────
 
   /** 用大学院地址重写一条 URL；尺寸对不上或查不到就返回原值。 */
@@ -274,11 +416,14 @@
     for (const attribute of ["src", "srcset"]) {
       const raw = element.getAttribute(attribute);
       if (!raw) continue;
+      // 已经在大学院图床上的地址不必再处理（幂等）。
+      if (attribute === "src" && isMtgchUrl(raw)) continue;
       const urls = attribute === "src" ? [raw] : srcsetCandidates(raw);
       for (const url of urls) {
-        const parsed = parseScryfallImageUrl(url);
-        if (!parsed) continue;
-        const pending = artRequests.get(parsed.printingId);
+        if (isMtgchUrl(url)) continue;
+        const printingId = englishPrintingIdOf(url);
+        if (!printingId) continue;
+        const pending = artRequests.get(printingId);
         if (pending) {
           // 已经在查（或已缓存）：直接应用，不用再排一次微任务。
           pending.then((uris) => {
@@ -286,7 +431,7 @@
           });
           continue;
         }
-        fetchArtUris(parsed.printingId).then((uris) => {
+        fetchArtUris(printingId).then((uris) => {
           if (uris && element.isConnected) applyArt(element, uris);
         });
       }
@@ -1041,18 +1186,18 @@
     }
     globalThis.__phaseZhCardArtInstalled = true;
 
-    // 卡图只在英文界面下动。中文界面交给 phase.rs 自己（它已经有中文卡图），
-    // 理由见上面「卡图」区块的说明。
-    if (isEnglishUi()) {
-      patchSetAttributeForArt();
-      observeCardImages();
-    }
+    // 卡图在**中英文界面下都生效**（1.9.1 起）。两种界面的差别只在「怎么拿到英文
+    // 印刷 id」：
+    //   - 英文界面：应用不本地化，地址里的 id 本来就是英文的 → 直接用
+    //   - 中文界面：应用已把它换成中文 id → 用**截获到的应用自己那张表**按 URL
+    //     精确还原成英文 id（见上面「截获应用自己那张表」一节）
+    patchSetAttributeForArt();
+    observeCardImages();
+    captureLocaleMap();
     observePhaseIcons();
 
     const scan = () => {
-      // 用 isEnglishUi() 现判而不是记一个常量：phase.rs 允许在不刷新页面的情况下切
-      // 语言，切到英文后新渲染出来的图也应该被处理。
-      if (isEnglishUi()) scanCardImages();
+      scanCardImages();
       scanPhaseIcons();
     };
 
@@ -1063,8 +1208,7 @@
     }
     // 从 bfcache 回来时页面可能被浏览器整体恢复过一遍，补一次扫描。
     window.addEventListener("pageshow", scan);
-    console.info(`[phase-rs-zh] 已启用 v${VERSION}`
-      + (isEnglishUi() ? "（卡图 + 阶段图标）" : "（仅阶段图标：卡图功能只在英文界面生效）"));
+    console.info(`[phase-rs-zh] 已启用 v${VERSION}（卡图 + 阶段图标）`);
   }
 
   /**
@@ -1119,6 +1263,11 @@
     isEnglishUi,
     artRequests,
     install,
+    // 本地化表截获与精确还原（1.9.1）
+    buildLocalizedIndex,
+    englishPrintingIdOf,
+    localizedUrlToEnglish: LOCALIZED_URL_TO_ENGLISH,
+    isMtgchUrl,
     /** 断开本脚本挂上的全部观察器。测试要重装环境时用；生产里重复点击也不会走到这。 */
     disconnectObservers: () => {
       while (liveObservers.length > 0) {
@@ -1144,7 +1293,8 @@
       }
       return {
         界面语言: document.documentElement.getAttribute("lang"),
-        卡图功能生效: isEnglishUi(),
+        本地化表索引条数: LOCALIZED_URL_TO_ENGLISH.size,
+        是否截获到应用的表: localeMapCaptured,
         已查询过的印刷: artRequests.size,
         缓存条数: Object.keys(readArtCache()).length,
         卡图总数: images.length,

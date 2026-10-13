@@ -24,8 +24,10 @@ import vm from "node:vm";
 const SOURCE = readFileSync(new URL("../src/content.js", import.meta.url), "utf8");
 vm.runInThisContext(SOURCE, { filename: "content.js" });
 
-const { version, parseScryfallImageUrl, mapSrcset, srcsetCandidates, swapOneUrl } =
-  globalThis.__phaseZhCardArt;
+const {
+  version, parseScryfallImageUrl, mapSrcset, srcsetCandidates, swapOneUrl,
+  buildLocalizedIndex, englishPrintingIdOf, localizedUrlToEnglish, isMtgchUrl,
+} = globalThis.__phaseZhCardArt;
 
 /** 真实印刷：MH2 #2 Arcbound Javelineer（有官方中文图）。 */
 const ID = "fe4a2cb0-4129-451e-a946-a21ea646cc28";
@@ -190,4 +192,88 @@ test("书签小工具：与 src/content.js 行为一致", () => {
     if (gone === "zhs_image_uris") continue;
     assert.ok(!DIST_JS.includes(gone), `产物里仍有已删除的旧机制：${gone}`);
   }
+});
+
+
+// ── 截获应用那张本地化表 + 精确还原英文印刷 id（1.9.1）─────────────────
+
+/** 应用那张表的形状：键 = 英文印刷 id，值 = { id: 中文印刷 id, faces: [...] }。 */
+const EN_ZEN = "00006596-1166-4a79-8443-ca9f82e6db4e";
+const ZH_ZEN = "9a235bac-7372-4190-983d-dbc550b87631";
+const EN_GN3 = "540f3ddf-7512-42a0-ba22-b58453747346";
+const ZH_FROM_EN_ZEN = `https://cards.scryfall.io/normal/front/9/a/${ZH_ZEN}.jpg?1783000360`;
+const SMALL_FROM_EN_ZEN = `https://cards.scryfall.io/small/front/9/a/${ZH_ZEN}.jpg?1783000360`;
+/** GN3 那条的值是它自己的 id（它没有中文印刷，回填算法也没给它指派）。 */
+const SELF_GN3 = `https://cards.scryfall.io/normal/front/5/4/${EN_GN3}.jpg?1783920302`;
+const APP_MAP = {
+  schema_version: "v2",
+  [EN_ZEN]: { id: ZH_ZEN, faces: [{ small: SMALL_FROM_EN_ZEN, normal: ZH_FROM_EN_ZEN }] },
+  [EN_GN3]: { id: EN_GN3, faces: [{ small: SELF_GN3, normal: SELF_GN3 }] },
+};
+
+test("buildLocalizedIndex：跳过元数据，按 URL 建索引（同一 URL 只占一条）", () => {
+  // 索引是模块级且**幂等**的（不覆盖已有键），所以先清空，否则前面用例留下的
+  // 条目会让 added 变成 0 —— 那是测试污染，不是实现问题。
+  localizedUrlToEnglish.clear();
+  const added = buildLocalizedIndex(APP_MAP);
+  // schema_version 不是 UUID，跳过。
+  // EN_ZEN 那条 small 与 normal 是两个不同 URL → 2 条；
+  // EN_GN3 那条 small 与 normal 是同一个 URL → 只占 1 条。合计 3。
+  assert.equal(added, 3);
+  // 索引的键是**去掉查询串**的 URL（应用渲染时带不带 `?<ts>` 都可能，
+  // 归一化后同一个文件只占一条）。所以这里查归一化后的形式。
+  assert.equal(localizedUrlToEnglish.get(ZH_FROM_EN_ZEN.split("?")[0]), EN_ZEN);
+  assert.equal(localizedUrlToEnglish.get(SMALL_FROM_EN_ZEN.split("?")[0]), EN_ZEN);
+  assert.equal(localizedUrlToEnglish.get(SELF_GN3.split("?")[0]), EN_GN3);
+  // 而 englishPrintingIdOf 接受两种形式（自己会归一化）
+  assert.equal(englishPrintingIdOf(ZH_FROM_EN_ZEN), EN_ZEN);
+  assert.equal(englishPrintingIdOf(SMALL_FROM_EN_ZEN), EN_ZEN);
+  assert.equal(englishPrintingIdOf(SELF_GN3), EN_GN3);
+});
+
+test("englishPrintingIdOf：用 URL 精确还原，而不是按 id 猜", () => {
+  // 关键用例：应用写出来的地址里是**中文** id，而它真正对应的是**英文** id
+  assert.equal(englishPrintingIdOf(ZH_FROM_EN_ZEN), EN_ZEN);
+  assert.equal(englishPrintingIdOf(SMALL_FROM_EN_ZEN), EN_ZEN);
+  // 还原方向必须精确：不能因为「多个英文指向同一中文」就挑错那一个
+  assert.notEqual(englishPrintingIdOf(ZH_FROM_EN_ZEN), EN_GN3);
+});
+
+test("englishPrintingIdOf：查询串有无都能匹配（应用渲染时可能不带 ts）", () => {
+  const withoutTs = ZH_FROM_EN_ZEN.split("?")[0];
+  assert.equal(englishPrintingIdOf(withoutTs), EN_ZEN);
+});
+
+test("englishPrintingIdOf：未经本地化的英文地址直接用文件名里的 id", () => {
+  const url = `https://cards.scryfall.io/normal/front/0/0/${EN_ZEN}.jpg?1783926897`;
+  assert.equal(englishPrintingIdOf(url), EN_ZEN);
+});
+
+test("englishPrintingIdOf：不认识的地址返回 null（绝不猜）", () => {
+  for (const value of [
+    "",
+    null,
+    undefined,
+    "https://example.com/normal/front/0/0/" + EN_ZEN + ".jpg",
+    `https://cards.scryfall.io/normal/front/1/2/11111111-2222-3333-4444-555555555555.jpg`,
+    "https://backs.scryfall.io/normal/back/0/0/" + EN_ZEN + ".jpg",
+  ]) {
+    assert.equal(englishPrintingIdOf(value), null, `不该认得：${value}`);
+  }
+});
+
+test("isMtgchUrl：认出已经在大学院图床上的地址（幂等用）", () => {
+  assert.equal(isMtgchUrl(MTGCH_ZH), true);
+  assert.equal(isMtgchUrl(SCRYFALL), false);
+  assert.equal(isMtgchUrl(null), false);
+});
+
+test("中英文界面下都能还原：英文地址走快路径，本地化地址走表", () => {
+  // 英文界面：应用不本地化，地址里就是英文 id
+  const englishUiUrl = `https://cards.scryfall.io/normal/front/0/0/${EN_ZEN}.jpg`;
+  assert.equal(englishPrintingIdOf(englishUiUrl), EN_ZEN);
+  // 中文界面：应用已换成中文 id，靠截获的表还原回同一个英文 id
+  assert.equal(englishPrintingIdOf(ZH_FROM_EN_ZEN), EN_ZEN);
+  // 两条路径必须得到**同一个**英文 id，否则两种界面下会换出不同的图
+  assert.equal(englishPrintingIdOf(englishUiUrl), englishPrintingIdOf(ZH_FROM_EN_ZEN));
 });

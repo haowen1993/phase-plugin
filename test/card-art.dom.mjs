@@ -27,6 +27,8 @@ const SCRYFALL_SMALL = `https://cards.scryfall.io/small/front/f/e/${ID}.jpg?1783
 const ZH_NORMAL = `https://images.mtgch.com/zhs/normal/front/f/e/${ID}.webp?ts=1756713600`;
 const ZH_SMALL = `https://images.mtgch.com/zhs/small/front/f/e/${ID}.webp?ts=1756713600`;
 const EN_NORMAL = `https://images.mtgch.com/sf/normal/front/f/e/${ID}.webp?ts=1783926897`;
+/** 应用本地化后的中文印刷 id（与英文 id 不同）。 */
+const ZH_ID = "9a235bac-7372-4190-983d-dbc550b87631";
 const EN_SMALL = `https://images.mtgch.com/sf/small/front/f/e/${ID}.webp?ts=1783926897`;
 
 /** 只带英文图的印刷（大学院没有中文图，API 只给 image_uris）。 */
@@ -165,25 +167,45 @@ describe("装配：只读补丁 + API 查询", () => {
     expect(art.isEnglishUi()).toBe(true);
   });
 
-  it("中文界面下装配不挂补丁：应用写 src 不发出任何请求", async () => {
+  it("中文界面下也挂补丁：英文地址一次写入就发请求", async () => {
+    // 1.9.1 起两种界面都生效。中文界面下应用会把地址本地化成中文 id，
+    // 那时靠截获的表还原；这里先用**未经本地化**的英文地址验证补丁本身。
     stubFetch(() => WITH_ZH);
     document.documentElement.lang = "zh-CN";
-    reinstall();                       // 在中文界面下重新装配
-    const img = mountImage(null);
-    img.setAttribute("src", SCRYFALL); // 模拟 React 写入
-    await settle();
-    expect(calls.length, "中文界面下不该发出 API 请求").toBe(0);
-    expect(img.getAttribute("src")).toBe(SCRYFALL);
-  });
-
-  it("英文界面下装配会挂补丁：同样一次写入就会发请求", async () => {
-    stubFetch(() => WITH_ZH);
-    document.documentElement.lang = "en";
     reinstall();
     const img = mountImage(null);
     img.setAttribute("src", SCRYFALL);
-    expect(calls.length, "英文界面下属性写入就该发出请求").toBe(1);
+    expect(calls.length, "两种界面下属性写入都该发出请求").toBe(1);
     await settle();
+    expect(img.getAttribute("src")).toBe(ZH_NORMAL);
+  });
+
+  it("中文界面下：应用已本地化成中文 id 的地址也能还原成英文 id", async () => {
+    // 这是 1.9.1 的核心：地址里是**中文印刷 id**，而大学院只认英文 id。
+    // 靠截获到的应用那张表按 URL 精确还原。
+    const zhSrc = `https://cards.scryfall.io/normal/front/9/a/${ZH_ID}.jpg?1783000360`;
+    const zhSmall = `https://cards.scryfall.io/small/front/9/a/${ZH_ID}.jpg?1783000360`;
+    const appMap = {
+      schema_version: "v2",
+      [ID]: { id: ZH_ID, faces: [{ small: zhSmall, normal: zhSrc }] },
+    };
+    // 模拟应用自己 fetch 那张表 —— 我们的 fetch 补丁应当截获它
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("scryfall-images")) {
+        return { ok: true, status: 200, json: async () => appMap, clone: () => ({ ok: true, json: async () => appMap }) };
+      }
+      calls.push(String(url));
+      return { ok: true, status: 200, json: async () => WITH_ZH };
+    };
+    reinstall();
+    await globalThis.fetch("https://data.phase-rs.dev/scryfall-images.v2.zh.json?x=1");
+    await settle();
+
+    const img = mountImage(zhSrc, `${zhSmall} 146w, ${zhSrc} 488w`);
+    globalThis.__phaseZhCardArt.queueArtLookups(img);
+    await settle();
+    // 还原出的英文 id 就是 ID，所以问的是大学院的这个 id
+    expect(calls.some((u) => u.includes(ID)), "应当用还原出的英文 id 去查大学院").toBe(true);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
   });
 });

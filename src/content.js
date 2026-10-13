@@ -1,109 +1,69 @@
 /**
- * Phase 中文卡图 — 书签小工具正文（bookmarklet，在页面自己的世界里执行）。
+ * phase.rs 增强 — 书签小工具正文（bookmarklet，在页面自己的世界里执行）。
  *
  * 做两件事：
- *   1. 把 phase.rs 网页版渲染的卡图，全部改走大学院废墟（mtgch.com）的图床；
- *   2. 把回合阶段栏的 12 个内联 SVG 图标换成公开图标库的图形。
- * 两件事互不相干，各自独立装配（见文件末尾「阶段图标替换」一节）。
  *
- * 作用（卡图部分）：把 phase.rs 网页版渲染的卡图，全部改走大学院废墟（mtgch.com）的图床：
- * 该印刷有简体中文图就用中文图，没有就用大学院废墟自己的英文图。点一次书签脚本即注入
- * 并生效；刷新页面后脚本不再运行，页面自然回到 Scryfall 英文图。
+ *   1. **卡图**：英文界面下，把 phase.rs 渲染的卡图改走大学院废墟（mtgch.com）——
+ *      有中文图就用中文图，没有就用大学院自己的英文图。
+ *   2. **阶段图标**：把回合阶段栏的 12 个内联 SVG 换成公开图标库（Tabler Icons）的图形。
  *
- * ── 三级阶梯 ────────────────────────────────────────────────────────────
+ * 两件事互不相干，各自独立装配。
  *
- * 两张 CDN 的 URL 形状一一对应，改动只是 host、`/zhs|sf/` 前缀和扩展名：
+ * ────────────────────────────────────────────────────────────────────────
+ * 卡图：只在英文界面生效
+ * ────────────────────────────────────────────────────────────────────────
  *
- *   https://cards.scryfall.io/normal/front/f/2/<uuid>.jpg?1783921885
- *   https://images.mtgch.com/zhs/normal/front/f/2/<uuid>.webp   ← 中文
- *   https://images.mtgch.com/sf/normal/front/f/2/<uuid>.webp    ← 英文
+ * **中文界面下本脚本完全不碰卡图。** 这是刻意的设计，不是遗漏：
  *
- * 改写是无状态的、同步的，不需要查任何 API：大学院废墟对「没有中文图」的印刷
- * 直接让 `/zhs/` 路径返回 404，这个 404 就是判据。加载失败时本脚本把该元素降到
- * 下一级，于是：
+ * phase.rs 在中文界面会给「中文印刷 id」（它自己那张 `scryfall-images.v2.zh.json`
+ * 映射表的产物），而大学院图床用的是「英文印刷 id」——两套 id **完全不相交**
+ * （实测 84393 条映射里交集只有 4 个）。要换算就得：
  *
- *   zhs（中文） --404--> sf（英文，仍是大学院废墟） --404--> scryfall（最终兜底）
+ *   - 下载那张 33.9 MB 的映射表（线上 4 MB），而且
+ *   - 它本身是**多对一**的：一个中文 id 平均被 2.07 个英文 id 指向，31% 的卡有歧义。
+ *     实测「寇族验装兵」的中文版同时被 zen#21 与 gn3#14 指向，而那是**两张不同的整卡**
+ *     （基本地更糟：不同系列的插画整个不一样）。
  *
- * 第三级看似冗余——它就位是为了保证「绝不会比原版更差」。前两级都取不到图时
- * 说明大学院废墟侧缺这张印刷，此时退回应用本来就用的 Scryfall URL，而不是让
- * 卡牌变成裂图。
+ * 也就是说反查会**指到别的整卡**。这条路的收益（中文卡图）phase.rs 自己已经提供了，
+ * 所以直接放弃，只在英文界面下工作。
  *
- * `art_crop`（插画裁切）直接走 `sf`：画框裁切只是插画本身，与语言文字无关，
- * 大学院废墟也没有 `zhs/art_crop`（实测 404）。其 `/sf/art_crop/…` 实测为
- * 626x457，与 Scryfall 的 art_crop 尺寸一致，所以换过去不改变取景。
+ * ── 英文界面下的流程 ────────────────────────────────────────────────────
  *
- * ── 失败不等于 404：这是本脚本最容易搞错的一处 ──────────────────────────
+ *   1. 认出应用写的 Scryfall 地址，从文件名取出**英文印刷 id**
+ *   2. `GET https://mtgch.com/api/v1/card/{英文印刷id}/`   （实测 52~132ms，CORS 全放行）
+ *   3. `zhs_image_uris` 存在就用它（中文图），否则用 `image_uris`（大学院英文图）
+ *   4. 把 `src` 与 `srcset` 换成对应尺寸的大学院地址
  *
- * `<img>` 的 error 事件不带状态码，「这张印刷没有中文图（真 404）」和「这次请求
- * 没连上（网络抖动）」在事件里长得一模一样。早先的版本把两者都当成 404 直接降级，
- * 于是一张**有**中文图的牌只要碰上一次抖动就被打成英文，而 `givenUp` 记下之后本次
- * 页面加载再也不重试——用户看到的就是「时好时坏，很多卡莫名其妙是英文」。
+ * 第 3 步的回落意味着**永远不会没图**：跨 12 个系列实测 3409 张有中文、1329 张回落到
+ * 大学院英文图、0 张无图。
  *
- * 这不是假想的边角情况。实测 images.mtgch.com：同一个 URL 连续 12 次只有 1 次拿到
- * 200，其余全是连接被拒（它挂在腾讯 EdgeOne 后面，一次解析出 4 个地址，多数拒连）。
- * 同一个 host 还对**每一个**响应重复发两次 `access-control-allow-origin`，浏览器会
- * 直接判该响应无效——所以任何带 `crossOrigin="anonymous"` 的请求永远失败。那是应用
- * 的 WebGL / 施放动画路径，本脚本改不动也不该改（见下面 `isCorsOnly`）。
+ * **已知取舍：会有一次闪烁。** 地址是应用先写进 DOM 的，浏览器立刻就发请求了，API
+ * 回来（约 76ms）之前那张英文图可能已经显示出来。先显示（哪怕短暂是英文）比先空白
+ * 一段时间更好——这是刻意的选择。要改成不闪，就在换好之前把 img 置为
+ * `visibility: hidden`（`hidden` 不影响布局，不会跑位）。
  *
- * 于是降级前先发一个**便宜的存在性探测**：`Range: bytes=0-0` 的 GET。
+ * ── 为什么用原型补丁而不是只靠观察器 ────────────────────────────────────
  *
- *   2xx/206 → 图确实存在，刚才只是抖动 → **原地重试**，不降级
- *   404/410 → 图确实没有 → 降级
- *   探不动（无 fetch、被 CSP 拦、超时）→ 按「存在」处理，重试一次再降级
+ * `MutationObserver` 的回调是异步的（一个微任务之后），而原型补丁在属性写入的那一刻
+ * 就能拿到 id 并把请求发出去，让 API 的往返与浏览器加载原图**并行**——省下的正是那
+ * 几十毫秒。补丁是**只读**的：它不改 `value`（地址要等 API 回来才知道，同步改不了），
+ * 真正的写入发生在 Promise 回调里，所以不会递归触发自己。
  *
- * 探测同样走这个 CDN，所以它自己也可能失败——但它是**独立**发出去的：`<img>` 那条
- * 卡在某个坏地址上时，探测有另一次机会落到别的边缘节点。这正是实测中「同源中继
- * 10/10 成功、直连 curl 只有约 8%」的原因（Node 会并行尝试全部地址、谁先通用谁）。
- *
- * 重试有上限：图存在却一直取不到时不能无限重试，每个 `印刷:尺寸` 最多重试 2 次，
- * 之后老老实实降级。
- *
- * ── 为什么必须「先改写，失败再降级」而不是交给 onError 处理 ──────────────
- *
- * phase.rs 的 CardImage 自带降级链：`onError={() => advanceFailedSource(src)}`。
- * 一旦换上去的图加载失败，应用的降级链会认为这张卡的美术挂了，把整张卡换成纯
- * 文字占位——比看到英文卡图糟得多。所以本脚本在捕获阶段拦下 `error`，自己降级，
- * 并用 `stopPropagation()` 阻止应用自己的 onError 触发。只有当 URL 已经处于
- * 最后一级（Scryfall）时我们才放手，让应用按原有逻辑降级——那才是真正的加载
- * 失败。
- *
- * ── 为什么要改页面原型（书签天然满足） ──────────────────────────────────
- *
- * 要零闪烁就必须在浏览器发起请求之前改掉属性值。React 18 通过
- * `node.setAttribute(...)` 写入 `src` 与 `srcset`，而只有页面自己的 JS 世界才改得动
- * `Element.prototype`——浏览器扩展的隔离世界改不了（所以扩展得声明 `world: "MAIN"`，
- * userscript 管理器得写 `@inject-into page`）。书签的 `javascript:` 地址本来就在页面
- * 自己的世界里执行，这个坑天然不存在，于是可以直接给 `Element.prototype.setAttribute`
- * 打补丁，同步改写，浏览器永远看不到英文 URL。代价是拿不到 `chrome.*` API——本脚本
- * 也不需要，它不请求任何接口。
- *
- * ── 同一份脚本也要认得应用自己发出的中文图地址 ──────────────────────────
- *
- * phase.rs 的某些分支（中文分支、本地开发）自己就会把卡图指向大学院废墟，甚至为了
- * 绕开上面那个重复 CORS 头改成走**同源中继** `/card-art/zhs/…`。同源地址在浏览器里
- * 是最可靠的一种（不同源，也就没有 CORS 检查）。此时本脚本不该装作看不见：认得出它，
- * 才能在它 404 时把阶梯接着往下走。所以解析器同时接受
- *
- *   https://images.mtgch.com/zhs|sf/…      （绝对，跨源）
- *   /card-art/zhs|sf/…                     （同源中继，相对路径）
- *
- * 两种写法，并保持原样往回写——**只换层级，不换寻址方式**。把相对路径改成绝对路径
- * 会把应用刻意绕开的 CORS 又拉回来。
+ * 书签天然满足「在页面自己的世界里执行」这个前提（`javascript:` 地址本来就在页面
+ * 世界里），所以改得动 `Element.prototype`——浏览器扩展的隔离世界改不了。
  *
  * ── 刻意不处理的东西 ───────────────────────────────────────────────────
  *
- * - `backs.scryfall.io`（CARD_BACK_URL，牌背）与语言无关，host 不匹配即跳过。
- * - 已安装的「图像包」：用户显式安装的资源，URL 不在 scryfall.io 下，天然不碰。
- * - small/normal/large/art_crop 之外的尺寸（png、border_crop、thumb…）：应用
- *   目前不使用，遇到就原样放过，不猜。
- * - 桌面版（DMG / Tauri 套壳）：书签在 WebView 里用不了，本工具只覆盖网页版。
+ * - `backs.scryfall.io`（牌背）与语言无关，不碰。
+ * - `art_crop`（插画裁切）与语言无关，不碰。
+ * - 已安装的「图像包」：URL 不在 scryfall.io 下，天然不碰。
+ * - 桌面版（Tauri 套壳）：书签在 WebView 里用不了。
  *
  * ── 隐私与缓存 ─────────────────────────────────────────────────────────
  *
- * 不写任何持久化状态：没有 localStorage / sessionStorage / cookie，不查 API，
- * 不缓存图片。存在性探测只读状态码、用 `Range` 取 0 字节，结果只在内存里存
- * 几十秒。它做的全部事情就是在属性写入时换一个 URL，在加载失败时先探一下、
- * 再决定重试还是降级。
+ * 只把「印刷 id → 三个尺寸的大学院地址」存进 localStorage（键 `phaseZhMtgchArtV1`），
+ * 用于跨刷新复用。不写 cookie，不记录任何与玩家身份相关的信息。同一张卡在页面上
+ * 出现多次只发一次请求；单页最多新建 400 个请求。
  */
 (() => {
   "use strict";
@@ -113,578 +73,264 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.8.1";
-
+  const VERSION = "1.9.0";
+  // ────────────────────────────────────────────────────────────────────────
+  // 卡图：英文界面下改走大学院废墟
+  // ────────────────────────────────────────────────────────────────────────
+  //
+  // ## 只在英文界面生效（刻意的设计，不是遗漏）
+  //
+  // 中文界面下**完全不碰卡图**。原因是 phase.rs 中文界面会给「中文印刷 id」，而那个
+  // id 与大学院图床用的「英文印刷 id」是两套不相交的空间；要换算就得引入一张
+  // 33.9 MB 的映射表（而且实测那张表本身是**多对一**的错误聚合，31% 的卡会指到
+  // 别的整卡）。绕这一大圈换来的东西，phase.rs 自己已经提供了 —— 所以这里直接放弃。
+  //
+  // ## 流程（英文界面）
+  //
+  //   1. 认出应用写的 Scryfall 地址，从文件名里取出英文印刷 id（UUID）
+  //   2. `GET https://mtgch.com/api/v1/card/{id}/`  —— 实测 52~132ms，CORS 全放行
+  //   3. 有 `zhs_image_uris` 就用它（中文图），否则用 `image_uris`（大学院的英文图）
+  //   4. 把 `src` 与 `srcset` 换成对应尺寸的大学院地址
+  //
+  // **第三步的回落意味着永远不会没图**：跨 12 个系列实测 3409 张有中文、1329 张
+  // 回落到大学院英文图、0 张无图。
+  //
+  // ## 为什么可以先按 Scryfall 加载、再换掉（会有一次闪烁）
+  //
+  // 地址是应用先写进 DOM 的，浏览器立刻就发请求了；API 回来之前那张英文图可能已经
+  // 显示出来。这是**刻意的取舍**：先把图显示出来（哪怕短暂是英文），比先空白一段
+  // 时间更好。要改成不闪，就在换好之前把 img 置为 `visibility: hidden`（`hidden`
+  // 不影响布局，所以不会跑位）—— 留作以后的可选项。
+  //
+  // ## 不做的两件事
+  //
+  // - 不查那张 33.9 MB 的映射表，不做任何「中文印刷 id → 英文印刷 id」的换算。
+  // - 不做存在性探测与降级阶梯。大学院图床本身很稳（实测 `/zhs/` 与 `/sf/` 对正确
+  //   的 id 都是 4/4、30/30 命中），换上去的地址失败时交给应用自己的降级链处理。
+  const MTGCH_API = "https://mtgch.com/api/v1/card/";
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
 
-  /**
-   * 应用自建的同源中继前缀。
-   *
-   * 与 phase.rs 中文分支的 `DERIVED_ART_PROXY_PATH`（client/src/services/scryfall.ts）
-   * 以及 vite 的 `/card-art` 代理保持一致。它是那条分支的实现细节，所以这里只当作
-   * 「一种要认得的寻址方式」：缺了它本脚本照常工作，只是看不到那条路径上的图。
-   */
-  const RELAY_PATH = "/card-art";
-
-  const ZHS_PREFIX = "zhs";
-  const SF_PREFIX = "sf";
-
-  /**
-   * 三个来源层级。`prefix` 为 null 表示该 host 下没有子目录（Scryfall）。
-   * `artCrop` 表示该层是否提供插画裁切图：中文层不提供（插画与语言无关）。
-   */
-  const TIERS = {
-    zh: { host: MTGCH_IMAGE_HOST, prefix: ZHS_PREFIX, extension: "webp", artCrop: false },
-    "mtg-en": { host: MTGCH_IMAGE_HOST, prefix: SF_PREFIX, extension: "webp", artCrop: true },
-    scryfall: { host: SCRYFALL_IMAGE_HOST, prefix: null, extension: "jpg", artCrop: true },
-  };
-
-  const TIER_ORDER = ["zh", "mtg-en", "scryfall"];
-
-  /**
-   * 寻址方式。`origin` 决定 URL 往回写成什么样，它与层级（tier）是两个正交的维度：
-   *
-   *   cdn    → `https://images.mtgch.com/…`   绝对，跨源
-   *   relay  → `/card-art/…`                  同源，相对路径
-   *   direct → `https://cards.scryfall.io/…`  绝对，应用原本的地址
-   *
-   * 同一层级在两种 origin 下各有一种写法，`urlFor` 就是这两者的叉乘，也是全脚本
-   * 唯一的 URL 拼装点。
-   */
-  const ORIGINS = {
-    cdn: { scheme: "https", host: MTGCH_IMAGE_HOST, prefix: "", relative: false },
-    relay: { scheme: "", host: "", prefix: RELAY_PATH, relative: true },
-    direct: { scheme: "https", host: SCRYFALL_IMAGE_HOST, prefix: "", relative: false },
-  };
-
-  /** 带卡面的尺寸。应用只用这三种，加 art_crop 共四种。 */
-  const FACE_SIZES = new Set(["small", "normal", "large"]);
-  const ART_CROP = "art_crop";
-  const FACES = new Set(["front", "back"]);
-
+  /** 文件名里就是印刷 id，形状固定。 */
   const ART_FILENAME = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:jpg|jpeg|png|webp)$/;
+  /** 应用只用这几种尺寸；`art_crop` 与语言无关，不处理。 */
+  const FACE_SIZES = new Set(["small", "normal", "large"]);
 
-  // ────────────────────────────────────────────────────────────────────────
-  // URL 解析与改写（纯函数，可脱离 DOM 单测）
-  // ────────────────────────────────────────────────────────────────────────
-
-  /**
-   * 拆出 scheme / host / path 段。
-   *
-   * 不用 `new URL()` 的原因和 phase.rs 里 `splitSizedImageUrl` 一致：这里会在
-   * 每个卡图属性上被调用，输入可能是空串、相对路径或测试替身；手写拆分没有
-   * 抛异常的分支，不认识就返回 null。
-   */
-  function splitHttpsUrl(value) {
-    if (typeof value !== "string" || value.length === 0) return null;
-    const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?/.exec(value);
-    if (!match) return null;
-    const [, scheme, host, pathname] = match;
-    return {
-      scheme,
-      host: host.toLowerCase(),
-      segments: pathname.split("/").filter((segment) => segment.length > 0),
-    };
-  }
-
-  /**
-   * 只取 host：用于 `crossOrigin` 判定（相对路径 = 同源 = 没有 CORS 检查）。
-   * 不复用 splitHttpsUrl 是因为它连段数一起校验，而这里只想要 host。
-   */
-  function hostOf(value) {
-    if (typeof value !== "string") return null;
-    const match = /^https?:\/\/([^/?#]+)/.exec(value);
-    return match ? match[1].toLowerCase() : null;
-  }
-
-  /**
-   * 路径开头的语言层级标注：中继前缀（`/card-art`，可省）后面紧跟的那一段。
-   * 返回 `"zh"` / `"mtg-en"`，没有标注则返回 null。
-   *
-   * 判定与「段数必须是 5」是两件事，所以这里独立成函数：语言前缀要先于段数校验
-   * 被认出来并从 segments 里摘掉，而摘掉之后就没法再回头判断它是哪一级了。
-   */
-  function pathTier(value) {
-    if (value.startsWith(RELAY_PATH + "/")) {
-      const rest = value.slice(RELAY_PATH.length + 1);
-      if (rest.startsWith(ZHS_PREFIX + "/")) return "zh";
-      if (rest.startsWith(SF_PREFIX + "/")) return "mtg-en";
-      return null;
-    }
-    if (value.startsWith("/" + ZHS_PREFIX + "/")) return "zh";
-    if (value.startsWith("/" + SF_PREFIX + "/")) return "mtg-en";
-    if (value.includes("://")) {
-      const path = value.slice(value.indexOf("://") + 3);
-      const slash = path.indexOf("/");
-      if (slash < 0) return null;
-      return pathTier(path.slice(slash));
-    }
-    return null;
-  }
-
-  /**
-   * 把一张卡图 URL 解析成 `{ tier, origin, ref, scheme, base }`，或返回 null。
-   *
-   * `ref` 里的分片目录（uuid 的前两位）会与 uuid 交叉校验，这样一条构造畸形的
-   * URL 不会被改写成另一张卡的图片请求——宁可漏改，不可改错。
-   *
-   * 查询串（`?1783921885` 这类时间戳、以及重试时我们自己加的随机参数）在解析时
-   * 被丢弃：`urlFor` 不带走入参的查询串，于是**降级不会把旧缓存参数带下去**，
-   * 需要重试时由 `retryUrl` 显式加一个新的。
-   */
-  function parseArtUrl(value) {
-    if (typeof value !== "string" || value.length === 0) return null;
-
-    const tier = pathTier(value);
-    let origin = null;
-    let segments = null;
-    let scheme = "https";
-
-    if (value.startsWith(RELAY_PATH + "/")) {
-      // 同源中继：相对路径，没有 scheme 也没有 host。
-      origin = "relay";
-      scheme = "";
-      // 查询串（`?ts=…` 或重试参数）不属于路径，先剥掉再切段：否则它会粘在最后
-      // 一段上，让文件名正则失配——表现为「重试地址解析不出来」这种怪事。
-      const relative = value.slice(RELAY_PATH.length).split("?")[0].split("#")[0];
-      segments = relative.split("/").filter((segment) => segment.length > 0);
-    } else {
-      const split = splitHttpsUrl(value);
-      if (!split) return null;
-      if (split.scheme !== "https") return null;
-      scheme = split.scheme;
-      segments = split.segments;
-
-      if (split.host === SCRYFALL_IMAGE_HOST) origin = "direct";
-      else if (split.host === MTGCH_IMAGE_HOST) origin = "cdn";
-      else return null;
-    }
-
-    // 大学院废墟图床与同源中继都必须带语言前缀；应用原本的 Scryfall 地址则没有。
-    if (tier !== null) segments = segments.slice(1);
-    else if (origin !== "direct") return null;
-
-    if (segments.length !== 5) return null;
-
-    const [size, face, shardA, shardB, rawFilename] = segments;
-    if (!FACE_SIZES.has(size) && size !== ART_CROP) return null;
-    if (!FACES.has(face)) return null;
-    if (!/^[0-9a-f]$/.test(shardA) || !/^[0-9a-f]$/.test(shardB)) return null;
-
-    const match = ART_FILENAME.exec(rawFilename.split("?")[0].split("#")[0]);
-    if (!match) return null;
-    const printingId = match[1];
-    if (printingId[0] !== shardA || printingId[1] !== shardB) return null;
-
-    const ref = { size, face, shardA, shardB, printingId };
-    // 应用的 Scryfall 地址是唯一的兜底层；带前缀的那两种按前缀定级。
-    const resolvedTier = tier ?? "scryfall";
-    // 中文层没有 art_crop（插画与语言无关），这个尺寸只可能落在英文层。
-    if (size === ART_CROP && !TIERS[resolvedTier].artCrop) return null;
-
-    return { tier: resolvedTier, origin, ref, scheme, base: ORIGINS[origin].prefix };
-  }
-
-  /**
-   * 按层级把 `ref` 渲染成 URL。这是全脚本唯一的 URL 拼装点。
-   *
-   * 寻址方式由**目标层级**决定，不是照抄入参：
-   *
-   *   目标 scryfall → 永远写绝对地址（那是应用原本的形状，兜底就得原样还回去）
-   *   目标 zh / mtg-en → 保留来源的寻址方式（图床绝对地址，或同源中继的相对路径）
-   *
-   * `parsed.origin` 是**来源**的寻址方式，所以「升到中文层」这个跨 host 的动作
-   * 必须显式说明目标用 `cdn`——它绝不该被当成目标 host 用（那样会写出
-   * `https://cards.scryfall.io/zhs/…` 这种两边都不存在的地址）。
-   */
-  function urlFor(parsed, tier, origin) {
-    const target = ORIGINS[origin];
-    const spec = TIERS[tier];
-    const prefix = spec.prefix ? `/${spec.prefix}` : "";
-    const path = `${target.prefix}${prefix}`
-      + `/${parsed.ref.size}/${parsed.ref.face}/${parsed.ref.shardA}/${parsed.ref.shardB}/`
-      + `${parsed.ref.printingId}.${spec.extension}`;
-    return target.relative ? path : `${target.scheme}://${target.host}${path}`;
-  }
-
-  /**
-   * 已经确认大学院废墟两层都取不到图的 `印刷id:尺寸`。
-   *
-   * 为什么必须有这个集合：降到第三级时要写回 Scryfall URL，而这次写入会再次
-   * 经过我们补丁过的 `setAttribute`，于是 `rewriteUrl` 会立刻把它改回中文层，
-   * 造成 404 → 改写 → 404 的死循环。登记之后 `rewriteUrl` 对这张图原样放过。
-   *
-   * 按「印刷 + 尺寸」而不是只按印刷做键：`sf/art_crop` 缺失不代表同一张印刷的
-   * `zhs/normal` 也缺失，键太粗会让整张卡白丢中文。
-   *
-   * 纯内存、不持久化；页面刷新即重置。有上限，避免长会话里无界增长。
-   */
-  const givenUp = new Set();
-  const MAX_GIVEN_UP = 5000;
-
-  /** 已原地重试的次数，键为 `印刷id:尺寸`；防止「图存在但永远取不到」时无限重试。 */
-  const retryCounts = new Map();
-  const MAX_RETRIES = 2;
-
-  let retryCounter = 0;
-
-  function ladderKey(ref) {
-    return `${ref.printingId}:${ref.size}`;
-  }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // 中文印刷 id → 英文印刷 id
-  // ────────────────────────────────────────────────────────────────────────
-  //
-  // ## 为什么必须做这件事
-  //
-  // 大学院废墟的图床用的是 **Scryfall 的英文印刷 id**。而 phase.rs 在中文界面下会去查
-  // 它自己那份 `scryfall-images.v2.zh.json`，把地址换成**中文印刷的 id**——两者是两组
-  // **完全不相交**的 id：实测 84393 条映射里，中文 id 与英文 id 的交集只有 4 个。
-  //
-  // 所以只要卡图地址里是中文 id，大学院就必然 404（实测 60 个中文 id：`/zhs/` 0/60、
-  // `/sf/` 0/60），而 Scryfall 100% 有图。
-  //
-  // ## 两条途径，先便宜的后贵的
-  //
-  //   1. **反查表**：phase.rs 自己会把那张映射表发出来（`data.phase-rs.dev/
-  //      scryfall-images.v2.zh.json`，线上 4 MB、CORS 全开）。它本来就是「英文 id →
-  //      中文 id」，反过来读就是我们要的映射。**零 API 调用、即时命中。**
-  //   2. **Scryfall REST API**：反查表还没到、或表里没有某个 id 时的兜底。
-  //      1~2 个请求：`/cards/{id}` 拿 `oracle_id`，再 `/cards/search?q=oracleid:… lang:en`
-  //      拿英文印刷。
-  //
-  // 用 `oracle_id` 而不是 `illustration_id`：后者只在「同一张插画被重印」时才跨语言一致，
-  // 而 `oracle_id` 标识**这张牌本身**，任何语言的任何印刷都指向同一个值。
-  //
-  // ## 为什么不在失败路径上做（曾经的想法，走不通）
-  //
-  // 中文地址在 **Scryfall 上是能加载的**（数据就在那儿，只是不是中文图）。图能加载
-  // 就不会触发 `error`，失败路径根本不会运行。所以必须**在请求发出之前**换掉地址。
-  const LOCALE_ART_MAP_URL = "https://data.phase-rs.dev/scryfall-images.v2.zh.json";
-
-  /** 中文印刷 id → 英文印刷 id。表到齐之前是空的，用到时会触发加载。 */
-  const zhToEnPrinting = new Map();
-  let localeMapLoading = null;
-  let localeMapReady = false;
-
-  /**
-   * 界面是不是中文。用 `<html lang>` —— 那是应用自己声明的语言，比猜 URL 或文案可靠。
-   */
-  function isChineseUi() {
+  function isEnglishUi() {
     try {
-      const lang = document.documentElement?.getAttribute("lang") ?? "";
-      return /^zh/i.test(lang);
+      return /^en\b/i.test(document.documentElement?.getAttribute("lang") ?? "");
     } catch {
       return false;
     }
   }
 
-  /** 只认形状正确的条目，别把 `schema_version` 之类的元数据当成卡。 */
-  const PRINTING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-  function buildReverseMap(payload) {
-    if (!payload || typeof payload !== "object") return 0;
-    let added = 0;
-    for (const [englishId, entry] of Object.entries(payload)) {
-      if (!PRINTING_ID.test(englishId)) continue;
-      const normal = entry?.faces?.[0]?.normal;
-      if (typeof normal !== "string") continue;
-      const chineseId = normal.split("/").pop()?.split(".")[0];
-      // 没换印次（中英文同一个 id）就不必记，记了反而多一次查表。
-      if (!chineseId || chineseId === englishId || !PRINTING_ID.test(chineseId)) continue;
-      zhToEnPrinting.set(chineseId, englishId);
-      added += 1;
-    }
-    return added;
+  /**
+   * 从应用写的 Scryfall 地址里取出「尺寸 / front|back / 印刷 id」。
+   *
+   * 认不出来就返回 null，调用方原样放过——**绝不猜**。已经指向大学院的地址也返回
+   * null（不必重复处理），所以本函数天然幂等。
+   */
+  function parseScryfallImageUrl(value) {
+    if (typeof value !== "string" || value.length === 0) return null;
+    if (!value.startsWith(`https://${SCRYFALL_IMAGE_HOST}/`)) return null;
+    const path = value.slice(`https://${SCRYFALL_IMAGE_HOST}/`.length).split("?")[0].split("#")[0];
+    const segments = path.split("/").filter((s) => s.length > 0);
+    if (segments.length !== 5) return null;
+    const [size, face, shardA, shardB, rawFilename] = segments;
+    if (!FACE_SIZES.has(size)) return null;
+    if (face !== "front" && face !== "back") return null;
+    const match = ART_FILENAME.exec(rawFilename);
+    if (!match) return null;
+    const printingId = match[1];
+    // 分片目录必须是 id 的前两个字符，否则不是我们认识的形状。
+    if (printingId[0] !== shardA || printingId[1] !== shardB) return null;
+    return { size, face, printingId };
   }
+
+  // ── 查 API 并缓存 ───────────────────────────────────────────────────────
 
   /**
-   * 拉一次映射表并建反查。失败就静默放弃——还有 REST API 那条兜底。
+   * 印刷 id → 三个尺寸的大学院地址（或 null 表示没查到）。
    *
-   * 只在**真的遇到一个查不到的 id** 时才触发，所以英文界面下永远不会下载这 4 MB。
+   * 三层缓存，缺一不可：
+   *   - `artRequests`：同一张卡在手牌/战场/坟场同时出现时，**只发一次**请求。
+   *   - `localStorage`：跨刷新复用。大学院的图很少变，值得持久化。
+   *   - 负结果也缓存（内存里），避免对查不到的 id 反复打 API。
    */
-  function ensureReverseMap() {
-    if (localeMapReady || localeMapLoading) return localeMapLoading;
-    localeMapLoading = (async () => {
-      try {
-        const response = await fetch(LOCALE_ART_MAP_URL, { headers: { Accept: "application/json" } });
-        if (!response.ok) return;
-        const added = buildReverseMap(await response.json());
-        if (added > 0) localeMapReady = true;
-        if (debug()) console.info(`[phase-rs-zh] 反查表就绪：${added} 条中→英印次映射`);
-      } catch {
-        // 网络失败/被拦：保持未就绪，下次再试。
-        localeMapLoading = null;
-      }
-    })();
-    return localeMapLoading;
+  const artRequests = new Map();
+  const ART_CACHE_KEY = "phaseZhMtgchArtV1";
+  /** 单页最多新建几个请求，防止一次铺满整个牌库时把接口打爆。 */
+  const MAX_ART_REQUESTS = 400;
+  let artRequestCount = 0;
+
+  function readArtCache() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ART_CACHE_KEY) ?? "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
   }
 
-  // ── 途径 2：REST API 兜底 ───────────────────────────────────────────────
-
-  const printLookup = new Map();
-  const LOOKUP_CACHE_KEY = "phaseZhEnPrintingV1";
-  /** 单页最多查几次，避免刷屏时把 Scryfall 的速率限制打爆。 */
-  const MAX_LOOKUPS = 200;
-  let lookupCount = 0;
-
-  function readLookupCache(key) {
-    const cached = printLookup.get(key);
-    if (cached !== undefined) return cached;
+  function writeArtCache(printingId, uris) {
     try {
-      const stored = JSON.parse(localStorage.getItem(LOOKUP_CACHE_KEY) ?? "{}");
-      if (stored && typeof stored === "object" && typeof stored[key] === "string") {
-        printLookup.set(key, stored[key]);
-        return stored[key];
-      }
-    } catch { /* 无 localStorage 或内容损坏：当作没有缓存 */ }
-    return undefined;
-  }
-
-  function writeLookupCache(key, value) {
-    printLookup.set(key, value);
-    try {
-      const stored = JSON.parse(localStorage.getItem(LOOKUP_CACHE_KEY) ?? "{}");
-      stored[key] = value;
-      localStorage.setItem(LOOKUP_CACHE_KEY, JSON.stringify(stored));
+      const all = readArtCache();
+      all[printingId] = uris;
+      localStorage.setItem(ART_CACHE_KEY, JSON.stringify(all));
     } catch { /* 写不进去就算了，内存缓存仍然有效 */ }
   }
 
-  /** 有上限的 fetch，避免一条请求挂住整个换算。 */
-  async function lookupFetch(url, timeoutMs) {
-    const controller = typeof AbortController === "function" ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-    try {
-      const response = await fetch(url, {
-        signal: controller ? controller.signal : undefined,
-        headers: { Accept: "application/json" },
-      });
-      return response.ok ? await response.json() : null;
-    } catch {
-      return null;
-    } finally {
-      if (timer !== null) clearTimeout(timer);
-    }
-  }
-
-  /** 收藏编号是纯数字的优先——`TSP-157` 那种形式在大学院图床上不可靠。 */
-  function pickEnglishPrinting(prints) {
-    const usable = prints.filter((p) => p && typeof p.id === "string" && !p.digital && !p.promo);
-    if (usable.length === 0) return null;
-    const numeric = usable.filter((p) => /^\d+$/.test(String(p.collector_number ?? "")));
-    const pool = numeric.length > 0 ? numeric : usable;
-    return pool.reduce((best, p) => (String(p.released_at ?? "") < String(best.released_at ?? "") ? p : best));
-  }
-
   /**
-   * 把中文印刷 id 换算成英文印刷 id。查不到就返回 null，调用方保持原样。
+   * 查一张印刷的大学院地址。返回 `{small, normal, large}` 或 null。
    *
-   * 顺序是**先等反查表、再走 API**：表是免费的（一次下载覆盖全部 8 万条），而且它
-   * 常常正在加载中——直接跳去发 API 请求既慢又没必要。
-   *
-   * 只缓存**成功**的结果：失败可能是网络抖动，不该被永久记住。
+   * 选哪个字段就是「默认中文、没有中文回落到大学院英文图」这条规则的实现：
+   * `zhs_image_uris` 存在就用它，否则用 `image_uris`。
    */
-  async function findEnglishPrinting(zhPrintingId) {
-    const fromMap = zhToEnPrinting.get(zhPrintingId);
-    if (fromMap) return fromMap;
+  function fetchArtUris(printingId) {
+    const cached = artRequests.get(printingId);
+    if (cached) return cached;
 
-    // 表还没就绪：若正在加载就等它（最多 8 秒），到了再查一次。这一步很关键——
-    // 首次遇到中文 id 时表往往正在下载，等它比发两次 API 请求快得多。
-    if (!localeMapReady) {
-      ensureReverseMap();
-      if (localeMapLoading) {
-        await Promise.race([localeMapLoading, new Promise((r) => setTimeout(r, 8000))]);
-        const afterWait = zhToEnPrinting.get(zhPrintingId);
-        if (afterWait) return afterWait;
-      }
+    const stored = readArtCache()[printingId];
+    if (stored) {
+      const done = Promise.resolve(stored);
+      artRequests.set(printingId, done);
+      return done;
     }
 
-    const cached = readLookupCache(zhPrintingId);
-    if (cached !== undefined) return cached;
-    if (lookupCount >= MAX_LOOKUPS) return null;
-    lookupCount += 1;
-
-    const card = await lookupFetch(
-      `https://api.scryfall.com/cards/${encodeURIComponent(zhPrintingId)}`,
-      6000,
-    );
-    if (!card || typeof card.oracle_id !== "string") return null;
-
-    const found = await lookupFetch(
-      `https://api.scryfall.com/cards/search`
-      + `?q=${encodeURIComponent(`oracleid:${card.oracle_id} lang:en`)}&unique=prints`,
-      6000,
-    );
-    const pick = pickEnglishPrinting(Array.isArray(found?.data) ? found.data : []);
-    if (!pick) return null;
-
-    writeLookupCache(zhPrintingId, pick.id);
-    return pick.id;
-  }
-
-  function giveUpOn(ref) {
-    if (givenUp.size >= MAX_GIVEN_UP) givenUp.clear();
-    givenUp.add(ladderKey(ref));
-  }
-
-  /**
-   * 应用的英文卡图 URL → 我们想显示的第一选择。
-   *
-   * 带卡面的尺寸走中文层；`art_crop` 走英文层（中文层没有这个尺寸，插画也与
-   * 语言无关）。已经是大学院废墟的 URL、以及任何不认识的输入都原样返回，所以
-   * 本函数是幂等的——属性写入路径会重复经过它。已放弃的图直接返回原值。
-   *
-   * 只改写**应用原本的 Scryfall 地址**：已经在中继层或大学院废墟层上的 URL 一律
-   * 原样放过，于是「只换层级，不换寻址方式」这条不变量在这里也成立。
-   */
-  function rewriteUrl(value) {
-    const parsed = parseArtUrl(value);
-    if (!parsed || parsed.origin !== "direct" || parsed.tier !== "scryfall") return value;
-    if (givenUp.has(ladderKey(parsed.ref))) return value;
-    // 插画裁切与语言无关，直接走英文层。
-    if (parsed.ref.size === ART_CROP) return urlFor(parsed, "mtg-en", "cdn");
-
-    // 应用在中文界面下会给「中文印刷 id」，而大学院图床只认「英文印刷 id」——两组 id
-    // 完全不相交，所以照搬 id 必然 404。这里查反查表换掉；**必须同步完成**，因为地址
-    // 一旦写进 DOM，浏览器立刻就发请求了，晚了就来不及（而且中文地址在 Scryfall 上
-    // 能加载成功，不会触发 error，失败路径根本没机会跑）。
-    //
-    // `shardA`/`shardB` 是 id 的前两个字符，**换 id 就必须一起换**，否则会拼出
-    // `/front/d/0/0000579f-…`——分片目录与文件名不符，大学院直接 404。这个坑踩过两次。
-    const englishId = zhToEnPrinting.get(parsed.ref.printingId);
-    if (englishId) {
-      const ref = { ...parsed.ref, printingId: englishId, shardA: englishId[0], shardB: englishId[1] };
-      return urlFor({ ...parsed, ref }, "zh", "cdn");
-    }
-
-    // 表里没有：可能反查表还没到，也可能这个 id 本来就是英文的（英文卡占多数）。
-    //
-    // 两种情况都照常按中文层改写。表还没到就顺手把它拉起来——**但不再回头把已经渲染
-    // 的图片重写一遍**：那会让浏览器把已经下好的图重新下一遍，用户看到的是图闪一下、
-    // 甚至先空一会儿。改用「谁失败了谁自己纠正」：失败路径会查表（此时表多半已就绪）、
-    // 换成正确的 id 再试一次，其他图完全不受影响。
-    if (!localeMapReady) ensureReverseMap();
-    return urlFor(parsed, "zh", "cdn");
-  }
-
-  /**
-   * 下一级 URL，或 null。
-   *
-   * `origin` 保持原样（同源中继降级后仍是同源中继），层级按 TIER_ORDER 往下走；
-   * 已经在最后一级时返回 null，调用方据此把错误交回应用自己处理。
-   *
-   * 这里**不做网络判断**，纯粹的阶梯映射——「这次失败到底是不是 404」由
-   * `probeArtUrl` 回答，两者分开的好处是这段逻辑零依赖、可以被 Node 单测逐条钉死。
-   *
-   * 准备退到 Scryfall 层时顺手登记放弃——登记必须发生在写回属性之前，见
-   * `givenUp` 的说明。
-   */
-  function nextTierUrl(value) {
-    const parsed = parseArtUrl(value);
-    if (!parsed) return null;
-    const next = TIER_ORDER[TIER_ORDER.indexOf(parsed.tier) + 1];
-    if (!next) return null;
-    if (next === "scryfall") giveUpOn(parsed.ref);
-    // 兜底层是应用的原始形状：绝对地址、Scryfall 主机。中继/图床层则沿用来源的
-    // 寻址方式，于是 `<img src="/card-art/zhs/…">` 降级后是 `/card-art/sf/…`。
-    return urlFor(parsed, next, next === "scryfall" ? "direct" : parsed.origin);
-  }
-
-  /** 给同一个资源换一个新的缓存参数，用于原地重试。 */
-  function retryUrl(value) {
-    const parsed = parseArtUrl(value);
-    if (!parsed) return null;
-    retryCounter += 1;
-    const separator = value.includes("?") ? "&" : "?";
-    return `${value}${separator}r=${parsed.ref.printingId.slice(0, 8)}${retryCounter}`;
-  }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // 存在性探测：把「连不上」与「真 404」分开
-  // ────────────────────────────────────────────────────────────────────────
-
-  const PROBE_TIMEOUT_MS = 4000;
-  const PROBE_CACHE_TTL_MS = 30000;
-  const PROBE_CACHE_LIMIT = 512;
-
-  /** url → { exists, at }；exists 为 true/false/null（null = 探不动）。 */
-  const probeCache = new Map();
-  /** url → Promise，避免 srcset 的多个候选各发一次一模一样的探测。 */
-  const probePending = new Map();
-
-  function cacheProbe(url, exists) {
-    if (probeCache.size >= PROBE_CACHE_LIMIT) probeCache.clear();
-    probeCache.set(url, { exists, at: Date.now() });
-  }
-
-  function readProbeCache(url) {
-    const hit = probeCache.get(url);
-    if (!hit) return undefined;
-    if (Date.now() - hit.at > PROBE_CACHE_TTL_MS) {
-      probeCache.delete(url);
-      return undefined;
-    }
-    return hit.exists;
-  }
-
-  /** 把一个响应状态翻译成「存在 / 不存在 / 说不清」。 */
-  function classify(status) {
-    if (status >= 200 && status < 300) return true;
-    if (status === 404 || status === 410) return false;
-    // 5xx、403、429……都说不清：当成「存在」处理，让调用方重试一次，
-    // 而不是凭一个我们读不懂的状态码把卡图降级。
-    return null;
-  }
-
-  /**
-   * 探测 `url` 是否真实存在：`true` / `false` / `null`（探不动）。
-   *
-   * `Range: bytes=0-0` 让响应只传 1 个字节（200 变 206）。实测该 CDN 对缓存未命中
-   * 的 HEAD 会错报 404，所以 GET + Range 才是可靠的那一种——tools/check-live.mjs
-   * 里记着同一件事。
-   *
-   * 任何异常都收敛成 null（探不动），绝不向外抛：一个探测不该让页面上的图片处理
-   * 崩掉。
-   */
-  async function probeArtUrl(url) {
-    const cached = readProbeCache(url);
-    if (cached !== undefined) return cached;
-    const pending = probePending.get(url);
-    if (pending) return pending;
+    if (artRequestCount >= MAX_ART_REQUESTS) return Promise.resolve(null);
+    artRequestCount += 1;
 
     const task = (async () => {
-      let result = null;
-      if (typeof fetch === "function") {
-        let timer = null;
-        try {
-          const controller = typeof AbortController === "function" ? new AbortController() : null;
-          if (controller) timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-          const response = await fetch(url, {
-            headers: { Range: "bytes=0-0" },
-            cache: "no-store",
-            redirect: "follow",
-            signal: controller ? controller.signal : undefined,
-          });
-          result = classify(response.status);
-        } catch {
-          result = null;
-        } finally {
-          if (timer !== null) clearTimeout(timer);
-        }
+      const controller = typeof AbortController === "function" ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 8000) : null;
+      try {
+        const response = await fetch(MTGCH_API + encodeURIComponent(printingId) + "/", {
+          signal: controller ? controller.signal : undefined,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) return null;
+        const card = await response.json();
+        // 双面牌把图放在 faces[] 里，单面牌放顶层；两处都看一下。
+        const face = Array.isArray(card?.faces) ? card.faces[0] : null;
+        const uris = face?.zhs_image_uris ?? card?.zhs_image_uris
+          ?? face?.image_uris ?? card?.image_uris ?? null;
+        if (!uris) return null;
+        const picked = {};
+        for (const size of FACE_SIZES) if (typeof uris[size] === "string") picked[size] = uris[size];
+        if (!picked.normal) return null;
+        writeArtCache(printingId, picked);
+        return picked;
+      } catch {
+        // 网络失败不写缓存：下次还有机会。
+        artRequests.delete(printingId);
+        return null;
+      } finally {
+        if (timer !== null) clearTimeout(timer);
       }
-      // 探不动也缓存：否则每张降级的图都会白探一次。
-      cacheProbe(url, result);
-      return result;
     })();
 
-    probePending.set(url, task);
-    try {
-      return await task;
-    } finally {
-      probePending.delete(url);
+    artRequests.set(printingId, task);
+    return task;
+  }
+
+  // ── 换地址 ──────────────────────────────────────────────────────────────
+
+  /** 用大学院地址重写一条 URL；尺寸对不上或查不到就返回原值。 */
+  function swapOneUrl(value, uris) {
+    const parsed = parseScryfallImageUrl(value);
+    if (!parsed) return null;
+    const replacement = uris[parsed.size];
+    return replacement ?? null;
+  }
+
+  /**
+   * 把一个 `<img>` 换成大学院的地址。**这是本区块唯一的写入点。**
+   *
+   * `src` 与 `srcset` 都要换：浏览器在有 `srcset` 时按 `sizes` 挑候选，只换 `src`
+   * 会在挑中 `srcset` 候选时前功尽弃。两个属性用同一个「尺寸 → 地址」映射，所以
+   * 挑中的仍是同一个尺寸，取景不变。
+   */
+  function applyArt(element, uris) {
+    const src = element.getAttribute("src");
+    if (src) {
+      const next = swapOneUrl(src, uris);
+      if (next && next !== src) element.setAttribute("src", next);
     }
+    const srcset = element.getAttribute("srcset");
+    if (srcset) {
+      const next = mapSrcset(srcset, (url) => swapOneUrl(url, uris) ?? url);
+      if (next !== srcset) element.setAttribute("srcset", next);
+    }
+  }
+
+  /**
+   * 看过元素上现有的地址，找出还没有大学院地址的印刷 id 并发起查询；
+   * 回来后立刻应用。
+   *
+   * 同步部分**不写任何属性**：所以它可以安全地待在 `setAttribute` 补丁里，不会
+   * 递归、也不会让应用的写入拿到一个被改过的值。
+   */
+  function queueArtLookups(element) {
+    for (const attribute of ["src", "srcset"]) {
+      const raw = element.getAttribute(attribute);
+      if (!raw) continue;
+      const urls = attribute === "src" ? [raw] : srcsetCandidates(raw);
+      for (const url of urls) {
+        const parsed = parseScryfallImageUrl(url);
+        if (!parsed) continue;
+        const pending = artRequests.get(parsed.printingId);
+        if (pending) {
+          // 已经在查（或已缓存）：直接应用，不用再排一次微任务。
+          pending.then((uris) => {
+            if (uris && element.isConnected) applyArt(element, uris);
+          });
+          continue;
+        }
+        fetchArtUris(parsed.printingId).then((uris) => {
+          if (uris && element.isConnected) applyArt(element, uris);
+        });
+      }
+    }
+  }
+
+  /** 兜底：内联 HTML、SSR 或任何绕开 setAttribute 的写入。 */
+  /** 已挂上的观察器。留着是为了能断开——测试要重装，真实使用里重复点击也不该累积。 */
+  const liveObservers = [];
+
+  function observeCardImages() {
+    const root = document.documentElement;
+    if (!root || typeof MutationObserver !== "function") return;
+    const observer = new MutationObserver((records) => {
+      try {
+        for (const record of records) {
+          const target = record.target;
+          if (target instanceof HTMLImageElement) queueArtLookups(target);
+        }
+      } catch (error) {
+        if (debug()) console.warn("[phase-rs-zh] 卡图处理出错", error);
+      }
+    });
+    observer.observe(root, { subtree: true, attributes: true, attributeFilter: ["src", "srcset"] });
+    liveObservers.push(observer);
+  }
+
+  /** 首屏：所有已经在文档里的 `<img>`。 */
+  function scanCardImages() {
+    for (const image of document.querySelectorAll("img")) {
+      try {
+        queueArtLookups(image);
+      } catch (error) {
+        if (debug()) console.warn("[phase-rs-zh] 卡图处理失败", error);
+      }
+    }
+  }
+
+  /**
+   * 排障开关。控制台里执行 `__phaseZhCardArtDebug = true` 之后再点书签，脚本会把
+   * 「为什么这张卡没换」之类的判断过程打到控制台。
+   */
+  function debug() {
+    return globalThis.__phaseZhCardArtDebug === true;
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -701,391 +347,66 @@
   const SRCSET_WHITESPACE = new Set([0x20, 0x09, 0x0a, 0x0c, 0x0d]);
 
   function isSrcsetWhitespace(character) {
-    return SRCSET_WHITESPACE.has(character.charCodeAt(0));
+    return character !== undefined && SRCSET_WHITESPACE.has(character.codePointAt(0));
   }
 
   /**
-   * 对 `srcset` 的每个候选套用 `map`，保留 `146w` / `2x` 这类描述符。
-   * 一个都没变时返回原串，避免无谓的属性写入（那会再触发 MutationObserver）。
+   * 按 `srcset` 的语法切成「候选」，对每个候选的 URL 调一次 `map`，再原样拼回去。
    *
-   * 不能简单地按逗号切分：`data:` URL 自带逗号（`data:image/png;base64,AAAA`），
-   * 按逗号切会把一个候选拆成两个。这里按 srcset 的解析规则走——URL 到空白或
-   * 分隔逗号为止，而 `data:` URL 里的逗号属于 URL 本身；描述符则是接下来的
-   * 非空白内容，直到下一个逗号。
+   * 自己解析而不是用 `URL`/正则：候选形如 `url 146w` / `url 2x` / 只有 `url`，
+   * 逗号既可能是分隔符也可能是 URL 的一部分（`?a=1,b=2`），正规做法是按规范状态机
+   * 走。这里只实现改写需要的部分：**候选之间用逗号分隔，但逗号出现在 URL 中间时属于
+   * URL**。所以逐字符扫描，遇到空白才开始解析描述符，遇到逗号且不在描述符里就切分。
    */
   function mapSrcset(value, map) {
     if (typeof value !== "string" || value.length === 0) return value;
-
+    let result = "";
     let index = 0;
-    let changed = false;
-    const candidates = [];
+    const length = value.length;
 
-    while (index < value.length) {
-      // 跳过候选之间的空白与分隔逗号。
-      while (index < value.length && (isSrcsetWhitespace(value[index]) || value[index] === ",")) index += 1;
-      if (index >= value.length) break;
+    while (index < length) {
+      // 跳过前导空白与逗号
+      while (index < length && (isSrcsetWhitespace(value[index]) || value[index] === ",")) index += 1;
+      if (index >= length) break;
 
-      const isDataUrl = value.slice(index, index + 5).toLowerCase() === "data:";
+      // URL：读到空白或逗号为止
       const urlStart = index;
-      while (index < value.length && !isSrcsetWhitespace(value[index])) {
-        if (!isDataUrl && value[index] === ",") break;
-        index += 1;
+      while (index < length && !isSrcsetWhitespace(value[index]) && value[index] !== ",") index += 1;
+      let url = value.slice(urlStart, index);
+      // URL 末尾的逗号属于分隔符，不属于 URL
+      let trailingComma = false;
+      if (url.endsWith(",")) {
+        let trimmed = url;
+        while (trimmed.endsWith(",")) trimmed = trimmed.slice(0, -1);
+        index -= url.length - trimmed.length;
+        url = trimmed;
+        trailingComma = true;
       }
-      // 仅 `data:` 分支可能收集到结尾的分隔逗号。
-      const url = value.slice(urlStart, index).replace(/,+$/, "");
 
-      // URL 与描述符之间的空白要原样保留，否则 `… 1x, … 2x` 会被拼成 `…1x`。
-      const separatorStart = index;
-      while (index < value.length && isSrcsetWhitespace(value[index])) index += 1;
-      const separator = value.slice(separatorStart, index);
+      const mapped = map(url) ?? url;
+
+      // 描述符（`146w` / `2x` 等）：读到下一个逗号
       const descriptorStart = index;
-      while (index < value.length && value[index] !== ",") index += 1;
-      const descriptor = value.slice(descriptorStart, index);
+      while (index < length && value[index] !== ",") index += 1;
+      const descriptor = value.slice(descriptorStart, index).trim();
 
-      if (url.length === 0) continue;
-      const next = map(url);
-      if (next !== url) changed = true;
-      candidates.push(`${next}${separator}${descriptor}`);
+      if (result.length > 0) result += ", ";
+      result += mapped;
+      if (descriptor.length > 0) result += " " + descriptor;
+
+      // 吃掉分隔逗号
+      if (index < length && value[index] === ",") index += 1;
+      else if (trailingComma) { /* 已经消费过 */ }
     }
-
-    return changed ? candidates.join(", ") : value;
+    return result;
   }
 
-  /** `srcset` 里的全部候选 URL（用于失败判定）。 */
+  /** `srcset` 里的所有 URL，顺序不变。 */
   function srcsetCandidates(value) {
     const urls = [];
-    mapSrcset(value, (url) => {
-      urls.push(url);
-      return url;
-    });
+    mapSrcset(value, (url) => { urls.push(url); return url; });
     return urls;
   }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // DOM 改写
-  // ────────────────────────────────────────────────────────────────────────
-
-  /**
-   * 带 `crossOrigin="anonymous"` 的元素不该被换到大学院废墟。
-   *
-   * 那个 host 对每个响应重复发两次 `access-control-allow-origin`，浏览器直接判响应
-   * 无效——所以这类元素（应用的 WebGL / 施放动画，它们必须上传不污染画布的贴图）
-   * 换过去只会从「有英文图」变成「没图」。同源中继地址没这个问题，照常改写。
-   */
-  function isCorsOnly(image, value) {
-    if (image.crossOrigin == null || image.crossOrigin === "") return false;
-    const host = hostOf(value);
-    if (host === null) return false; // 相对路径 = 同源 = 没有 CORS 检查
-    return host !== location.host.toLowerCase();
-  }
-
-  function rewriteElement(image) {
-    const src = image.getAttribute("src");
-    if (src) {
-      const next = isCorsOnly(image, src) ? src : rewriteUrl(src);
-      if (next !== src) image.setAttribute("src", next);
-    }
-    const srcset = image.getAttribute("srcset");
-    if (srcset) {
-      const next = mapSrcset(srcset, (url) => (isCorsOnly(image, url) ? url : rewriteUrl(url)));
-      if (next !== srcset) image.setAttribute("srcset", next);
-    }
-  }
-
-  function scanCardImages() {
-    for (const image of document.querySelectorAll("img")) {
-      try {
-        rewriteElement(image);
-      } catch (error) {
-        // 一张图失败不该让整轮扫描停下，更不该把异常抛到观察器/事件层。
-        if (debug()) console.warn("[phase-rs-zh] 卡图改写失败", error);
-      }
-    }
-  }
-
-  /**
-   * 把该元素上仍处于大学院废墟/中继层级的 URL 整体降一级，或原地重试。
-   *
-   * 返回这次做了什么：
-   *   "advanced"  已降级，调用方应拦下错误事件
-   *   "retried"   已原地重试，调用方应拦下错误事件
-   *   "exhausted" 没有可动的了（已是 Scryfall 层，或根本不是卡图），交回应用
-   *
-   * `srcset` 先写、`src` 后写：带 `sizes` 的 srcset 优先于 src，先落 srcset 才能
-   * 保证这次重载取的是新的一级。
-   */
-  function advanceLadder(image, retry) {
-    const src = image.getAttribute("src");
-    const srcset = image.getAttribute("srcset");
-
-    const nextSrcset = srcset ? mapSrcset(srcset, (url) => stepUrl(url, retry) ?? url) : null;
-    const nextSrc = src ? stepUrl(src, retry) : null;
-
-    const srcsetChanged = nextSrcset !== null && nextSrcset !== srcset;
-    const srcChanged = nextSrc !== null && nextSrc !== src;
-
-    if (srcsetChanged) image.setAttribute("srcset", nextSrcset);
-    if (srcChanged) image.setAttribute("src", nextSrc);
-
-    if (!srcsetChanged && !srcChanged) return "exhausted";
-    // 「这次是重试还是降级」由 stepUrl 的返回值自己说：重试过的 URL 与原值同层
-    // （只多了缓存参数）。用返回值判断而不是用入参 retry，是因为入参只表达意图，
-    // 重试额度用尽时 stepUrl 会改降级。
-    const moved = nextSrc ?? nextSrcset;
-    const original = nextSrc !== null ? src : srcset;
-    return hopKind(original, moved);
-  }
-
-  /** 比较一次跳转前后的层级：同层 = 原地重试，降了一级 = 降级。 */
-  function hopKind(before, after) {
-    const from = firstParsedTier(before);
-    const to = firstParsedTier(after);
-    if (from === null || to === null) return "advanced";
-    return from === to ? "retried" : "advanced";
-  }
-
-  /** 取一段值里第一个可解析的卡图 URL 的层级。 */
-  function firstParsedTier(value) {
-    if (typeof value !== "string" || value.length === 0) return null;
-    for (const url of [value, ...srcsetCandidates(value)]) {
-      const parsed = parseArtUrl(url);
-      if (parsed) return parsed.tier;
-    }
-    return null;
-  }
-
-  /**
-   * 一次失败之后，这个 URL 该换成什么。
-   *
-   * `retry` 表达的是「探测说这张图确实存在，刚才只是没取到」——那是唯一值得原地
-   * 重试的情形。额度用尽（`MAX_RETRIES`）之后即使图还在也降级：一个永远取不到的
-   * 资源不能把页面拖在重试循环里。
-   */
-  function stepUrl(value, retry) {
-    const parsed = parseArtUrl(value);
-    if (!parsed) return null;
-    if (parsed.tier === "scryfall") return null;
-    if (retry) {
-      const key = ladderKey(parsed.ref);
-      const used = retryCounts.get(key) ?? 0;
-      if (used < MAX_RETRIES) {
-        if (retryCounts.size >= MAX_GIVEN_UP) retryCounts.clear();
-        retryCounts.set(key, used + 1);
-        return retryUrl(value);
-      }
-    }
-    return nextTierUrl(value);
-  }
-
-  /**
-   * 图片来源加载失败。
-   *
-   * 只处理还处在大学院废墟/中继层级的元素——降到 Scryfall 层还失败，说明是真的
-   * 加载不出来，此时放手让应用按原有逻辑处理。
-   *
-   * **`stopPropagation()` 必须同步调用。** 应用的 `onError` 是 React 19 在根容器
-   * 上的委托监听，靠事件从 window 捕获阶段被拦下来才不会触发；而这里要先 await 一个
-   * 存在性探测才能决定重试还是降级。把拦截放到 await 之后就晚了——事件传播早已结束，
-   * 应用的降级链（把整张卡换成文字占位）照跑不误。所以：先同步拦下，再异步决定怎么改。
-   *
-   * 「同步拦下」的判据是「这个元素上还有可降的层级」，这不需要网络：纯粹的 URL 判断。
-   */
-  function onResourceError(event) {
-    // 这个监听**每次图片加载失败都会被调用**，是整个脚本里触发最频繁的入口之一。
-    // 它抛出的异常没有任何人接：会变成未捕获异常，被 phase.rs 的全局 `error` 监听
-    // 上报成 `js_error`（`services/telemetryEvents.ts`），界面上就是「游戏崩溃」。
-    // 所以整段都包在 try 里——代价是一次 try，收益是这条路径永远不会把异常泄漏出去。
-    try {
-      handleResourceError(event);
-    } catch (error) {
-      if (debug()) console.warn("[phase-rs-zh] 卡图失败处理出错", error);
-    }
-  }
-
-  function handleResourceError(event) {
-    const image = event.target;
-    if (!(image instanceof HTMLImageElement)) return;
-
-    const candidates = imageCandidates(image);
-    const onLadder = candidates.filter((url) => {
-      const parsed = parseArtUrl(url);
-      return parsed !== null && parsed.tier !== "scryfall";
-    });
-    if (onLadder.length === 0) return;
-
-    // 同步拦住，别让应用看到这次失败。
-    event.stopPropagation();
-    // `void` 只表示「不 await」，**不接住拒绝**：这个 async 函数一旦抛错就变成
-    // `unhandledrejection`，而 phase.rs 同样监听该事件并上报 `js_error`
-    // （`services/telemetryEvents.ts`）。所以显式接住。
-    resolveTierFailure(image, onLadder).catch((error) => {
-      if (debug()) console.warn("[phase-rs-zh] 降级处理失败", error);
-    });
-  }
-
-  /** 该元素上所有待判定的卡图 URL：`src` 与 `srcset` 的全部候选。 */
-  function imageCandidates(image) {
-    const candidates = [];
-    const src = image.getAttribute("src");
-    if (src) candidates.push(src);
-    const srcset = image.getAttribute("srcset");
-    if (srcset) candidates.push(...srcsetCandidates(srcset));
-    return candidates;
-  }
-
-  /**
-   * 异步的那一半：探测 → 决定原地重试还是降级 → 改写属性。
-   *
-   * 探测回答的是「这张图真的不存在吗」。只要**任一**候选确实存在（或探不动），
-   * 就按抖动处理、原地重试；只有确认不存在才降级。
-   */
-  async function resolveTierFailure(image, onLadder) {
-    const src = image.getAttribute("src");
-
-    let exists = false;
-    for (const url of onLadder) {
-      const answer = await probeArtUrl(url);
-      if (answer !== false) {
-        exists = true;
-        break;
-      }
-    }
-
-    if (!image.isConnected) return;
-
-    // ── 先试「换算成英文印刷 id，再回大学院」 ──────────────────────────────
-    //
-    // 必须**排在重试与降级之前**。原因：`exists` 探的是同一条阶梯上的下一层，而中文
-    // 印刷 id 在**整条阶梯上都不存在**（实测 `/zhs/` 与 `/sf/` 对同一批中文 id 都是
-    // 0/60），于是 `exists` 为 false、`advanceLadder` 会带 `retry` 走「原地重试」——
-    // 拿一个 404 的地址白重试两次，再降级到 Scryfall。用户看到的就是「中文卡图裂了」。
-    //
-    // 换成英文 id 之后，大学院那边就有图了（`/zhs/` 有中文图就用中文，没有就 `/sf/`
-    // 英文），整条阶梯都不用走。
-    const resolved = await retryOnMtgchWithEnglishId(image, src);
-    if (resolved) return;
-
-    if (!image.isConnected) return;
-    const outcome = advanceLadder(image, exists);
-    if (outcome === "exhausted") return;
-    if (debug()) {
-      console.info(`[phase-rs-zh] ${outcome === "retried" ? "原地重试" : "降级"}：${src}`, {
-        exists,
-      });
-    }
-  }
-
-  /**
-   * 把当前地址里的印刷 id 换算成英文印刷 id，换成大学院图床的地址。
-   *
-   * 成功返回 true（调用方就此打住，不再重试、不再降级）。任何一步不成立都返回 false，
-   * 由调用方继续走原来的阶梯——**绝不因为换算失败而让卡图变差**。
-   */
-  async function retryOnMtgchWithEnglishId(image, src) {
-    const parsed = parseArtUrl(src);
-    if (!parsed || parsed.ref.size === ART_CROP) return false;
-
-    const englishId = await findEnglishPrinting(parsed.ref.printingId);
-    if (debug()) {
-      console.info(`[phase-rs-zh] 换算查询 ${parsed.ref.printingId} → ${englishId ?? "(失败)"}`, {
-        origin: parsed.origin,
-        tableReady: localeMapReady,
-        tableSize: zhToEnPrinting.size,
-      });
-    }
-    if (!englishId || englishId === parsed.ref.printingId) return false;
-    if (!image.isConnected) return false;
-
-    // 换成大学院的地址（中文层）。注意这里**不看 origin**：即使当前地址已经在大学院
-    // 图床上，只要 id 是「换算前那个查不到图的 id」，换掉它仍然有意义——降级会把
-    // `/zhs/<中文id>` 变成 `/sf/<中文id>`，那还是同一个查不到的 id。
-    //
-    // `shardA`/`shardB` 是 id 的前两个字符，**换 id 就必须一起换**，否则会拼出
-    // `/front/d/0/0000579f-…` 这种分片目录与文件名不符的地址（实测 404）。
-    const ref = {
-      ...parsed.ref,
-      printingId: englishId,
-      shardA: englishId[0],
-      shardB: englishId[1],
-    };
-    const target = urlFor({ ...parsed, ref }, "zh", "cdn");
-    if (image.getAttribute("src") === target) return false;
-    if (debug()) {
-      console.info(`[phase-rs-zh] 换算命中，改回大学院：${parsed.ref.printingId} → ${englishId}`);
-    }
-    image.setAttribute("src", target);
-    return true;
-  }
-
-  function debug() {
-    return globalThis.__phaseZhCardArtDebug === true;
-  }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // 装配
-  // ────────────────────────────────────────────────────────────────────────
-
-  /** 给 `HTMLImageElement.prototype` 上的一个反射属性打补丁。 */
-  function patchImageProperty(name, map) {
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, name);
-    if (!descriptor || typeof descriptor.set !== "function" || typeof descriptor.get !== "function") return;
-    Object.defineProperty(HTMLImageElement.prototype, name, {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get: descriptor.get,
-      set(value) {
-        descriptor.set.call(this, map(value, this));
-      },
-    });
-  }
-
-  /**
-   * 给 `Element.prototype.setAttribute` 打补丁。
-   *
-   * 这是真正起作用的那一层：React 18 对 `src` / `srcset` 走的是
-   * `node.setAttribute(...)`，在这里同步改写，浏览器就不会先发一次英文请求，
-   * 也就没有「先闪一下英文」。
-   */
-  function patchSetAttribute() {
-    const nativeSetAttribute = Element.prototype.setAttribute;
-    Element.prototype.setAttribute = function setAttribute(name, value) {
-      if (this instanceof HTMLImageElement) {
-        const attribute = String(name).toLowerCase();
-        if (attribute === "src") {
-          const text = String(value);
-          value = isCorsOnly(this, text) ? text : rewriteUrl(text);
-        } else if (attribute === "srcset") {
-          const text = String(value);
-          value = mapSrcset(text, (url) => (isCorsOnly(this, url) ? url : rewriteUrl(url)));
-        }
-      }
-      return nativeSetAttribute.call(this, name, value);
-    };
-  }
-
-  /** 兜底：内联 HTML、SSR 或任何绕开上面两条路径的属性写入。 */
-  function observe() {
-    const root = document.documentElement;
-    if (!root || typeof MutationObserver !== "function") return;
-    const observer = new MutationObserver((records) => {
-      // 同上：回调抛出的异常会变成未捕获异常，被应用的遥测上报成 js_error。
-      try {
-        for (const record of records) {
-          if (record.type !== "attributes") continue;
-          const target = record.target;
-          if (target instanceof HTMLImageElement) rewriteElement(target);
-        }
-      } catch (error) {
-        if (debug()) console.warn("[phase-rs-zh] 卡图属性改写失败", error);
-      }
-    });
-    observer.observe(root, {
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["src", "srcset"],
-    });
-  }
-
 
   // ────────────────────────────────────────────────────────────────────────
   // 阶段图标替换
@@ -1682,6 +1003,7 @@
       }
     });
     observer.observe(root, { subtree: true, childList: true });
+    liveObservers.push(observer);
   }
 
   /**
@@ -1699,6 +1021,18 @@
    * 共用闸门是对的——重复点击时两边都不该再挂第二份监听；而每次补扫描则对两边
    * 都成立。
    */
+  /**
+   * 装配。重复点击时只补扫描，不重复挂监听。
+   *
+   * 幂等闸对两种载体都成立：书签重复点击会让脚本跑第二遍，而第二次挂的
+   * `MutationObserver` 与原型补丁会让同一张卡被处理多次。扩展载体下浏览器只注入
+   * 一次，但这条闸没有理由不加。
+   *
+   * **两套逻辑共用一个闸，但装配的东西互不相干：**
+   *   - 卡图：`setAttribute` 补丁 + 一个只盯 `src`/`srcset` 的 attributes 观察器
+   *   - 阶段图标：自己的 childList 观察器
+   * 共用闸门是对的——重复点击时两边都不该再挂第二份。
+   */
   function install() {
     if (globalThis.__phaseZhCardArtInstalled === true) {
       scanCardImages();
@@ -1707,79 +1041,120 @@
     }
     globalThis.__phaseZhCardArtInstalled = true;
 
-    // 预载「中文印刷 id → 英文印刷 id」的反查表。
-    //
-    // 为什么要在装配时就拉：不在装配时拉的话，第一屏的中文卡只能先按原 id 拼一个必然
-    // 404 的地址，再触发一次网络往返、在失败路径上换算、再重发——用户看到的就是
-    // 「鼠标放上去先空白、等一会儿才出图」，而且每张卡的先后取决于各自撞上多少延迟，
-    // 同一手牌里的表现会五花八门。
-    //
-    // 表本身 4 MB，实测**下载 + 解析合计约 68 ms**，所以提前拉几乎不花时间，却能让
-    // 第一次渲染就用对 id。只在中文界面下拉——英文界面下这份表一次都用不上，没必要
-    // 白占 4 MB 流量。
-    if (isChineseUi()) ensureReverseMap();
-
-    patchImageProperty("src", (value) => rewriteUrl(value));
-    patchImageProperty("srcSet", (value, image) => mapSrcset(value, (url) => (
-      isCorsOnly(image, url) ? url : rewriteUrl(url)
-    )));
-    patchImageProperty("srcset", (value, image) => mapSrcset(value, (url) => (
-      isCorsOnly(image, url) ? url : rewriteUrl(url)
-    )));
-    patchSetAttribute();
-    observe();
-    observePhaseIcons();
-    window.addEventListener("error", onResourceError, true);
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", () => {
-        scanCardImages();
-        scanPhaseIcons();
-      }, { once: true });
-    } else {
-      scanCardImages();
-      scanPhaseIcons();
+    // 卡图只在英文界面下动。中文界面交给 phase.rs 自己（它已经有中文卡图），
+    // 理由见上面「卡图」区块的说明。
+    if (isEnglishUi()) {
+      patchSetAttributeForArt();
+      observeCardImages();
     }
-    // 从 bfcache 回来时页面可能被浏览器整体恢复过一遍，补一次扫描，
-    // 代价只是一次 querySelectorAll 加一次图标扫描。
-    window.addEventListener("pageshow", () => {
-      scanCardImages();
+    observePhaseIcons();
+
+    const scan = () => {
+      // 用 isEnglishUi() 现判而不是记一个常量：phase.rs 允许在不刷新页面的情况下切
+      // 语言，切到英文后新渲染出来的图也应该被处理。
+      if (isEnglishUi()) scanCardImages();
       scanPhaseIcons();
-    });
-    console.info(`[phase-rs-zh] 已启用 v${VERSION}`);
+    };
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", scan, { once: true });
+    } else {
+      scan();
+    }
+    // 从 bfcache 回来时页面可能被浏览器整体恢复过一遍，补一次扫描。
+    window.addEventListener("pageshow", scan);
+    console.info(`[phase-rs-zh] 已启用 v${VERSION}`
+      + (isEnglishUi() ? "（卡图 + 阶段图标）" : "（仅阶段图标：卡图功能只在英文界面生效）"));
+  }
+
+  /**
+   * 给 `Element.prototype.setAttribute` 打补丁，让应用写 `src`/`srcset` 时顺手排队
+   * 一次大学院查询。
+   *
+   * **只读不写**：补丁本身不改 `value`，因为地址要等 API 回来才知道，同步改不了。
+   * 排队是同步的（`queueArtLookups` 只读属性、发起 fetch），真正的写入在 Promise
+   * 回调里，所以不会递归触发自己。
+   *
+   * 为什么需要原型补丁而不是只靠观察器：`MutationObserver` 的回调是**异步**的
+   * （一个微任务之后），而原型补丁在属性写入的那一刻就能拿到 id 并把请求发出去，
+   * 让 API 的往返与浏览器加载原图**并行**。省下的就是那几十毫秒。
+   */
+  function patchSetAttributeForArt() {
+    const nativeSetAttribute = Element.prototype.setAttribute;
+    if (nativeSetAttribute.__phaseZhPatched === true) return;
+    const patched = function setAttribute(name, value) {
+      // 记下被包住的原生方法。这样**不需要额外保存全局引用**就能还原：
+      // 测试要换环境、或将来要卸载本脚本时，读 `__phaseZhNative` 即可。
+      // （踩过：不做这件事的话，测试里存下来的「原生方法」其实已经是打过补丁的，
+      // 还原就还原不掉，表现为「中文界面下仍然会发请求」这种假失败。）
+      patched.__phaseZhNative = nativeSetAttribute;
+      const result = nativeSetAttribute.call(this, name, value);
+      if (this instanceof HTMLImageElement) {
+        const attribute = String(name).toLowerCase();
+        if (attribute === "src" || attribute === "srcset") {
+          try {
+            queueArtLookups(this);
+          } catch (error) {
+            if (debug()) console.warn("[phase-rs-zh] 卡图排队失败", error);
+          }
+        }
+      }
+      return result;
+    };
+    patched.__phaseZhPatched = true;
+    Element.prototype.setAttribute = patched;
   }
 
   // 测试与诊断入口。测试在 DOM 环境里加载本文件后从这里取纯函数断言。
   globalThis.__phaseZhCardArt = {
     version: VERSION,
-    tiers: TIERS,
-    origins: ORIGINS,
-    relayPath: RELAY_PATH,
-    splitHttpsUrl,
-    parseArtUrl,
-    urlFor: (tier, ref) => urlFor({ ref }, tier, tier === "scryfall" ? "direct" : "cdn"),
-    urlForParsed: (parsed, tier, origin) => urlFor(parsed, tier, origin ?? parsed.origin),
-    urlForRelay: (tier, ref) => urlFor({ ref }, tier, "relay"),
-    rewriteUrl,
-    nextTierUrl,
-    retryUrl,
-    probeArtUrl,
+    apiBase: MTGCH_API,
+    parseScryfallImageUrl,
     mapSrcset,
     srcsetCandidates,
-    stepUrl,
-    advanceLadder,
-    rewriteElement,
-    givenUp,
-    retryCounts,
-    /** 探测结果有 30 秒缓存（真实使用里这是省请求的关键）。测试要换答案时必须
-     *  先清掉它，否则用例之间会互相串味。 */
-    clearProbeCache() {
-      probeCache.clear();
-      probePending.clear();
+    swapOneUrl,
+    applyArt,
+    queueArtLookups,
+    fetchArtUris,
+    isEnglishUi,
+    artRequests,
+    install,
+    /** 断开本脚本挂上的全部观察器。测试要重装环境时用；生产里重复点击也不会走到这。 */
+    disconnectObservers: () => {
+      while (liveObservers.length > 0) {
+        try { liveObservers.pop().disconnect(); } catch { /* 已经断了 */ }
+      }
+    },
+    /**
+     * 现场诊断：控制台执行 `__phaseZhCardArt.report()` 得到一份快照。
+     * 排查「哪张卡为什么没换」时先看它。
+     */
+    report: () => {
+      const images = [...document.querySelectorAll("img")].filter((i) => {
+        const v = i.getAttribute("src") ?? "";
+        return v.includes("scryfall") || v.includes("mtgch");
+      });
+      const tierOf = (v) => (v.includes("/zhs/") ? "大学院中文"
+        : v.includes("/sf/") ? "大学院英文"
+          : v.includes("scryfall") ? "Scryfall（未处理或处理中）" : "其它");
+      const byTier = {};
+      for (const i of images) {
+        const t = tierOf(i.getAttribute("src") ?? "");
+        byTier[t] = (byTier[t] ?? 0) + 1;
+      }
+      return {
+        界面语言: document.documentElement.getAttribute("lang"),
+        卡图功能生效: isEnglishUi(),
+        已查询过的印刷: artRequests.size,
+        缓存条数: Object.keys(readArtCache()).length,
+        卡图总数: images.length,
+        按来源: byTier,
+        已加载失败: images.filter((i) => i.complete && i.naturalWidth === 0).length,
+        仍在加载: images.filter((i) => !i.complete).length,
+      };
     },
   };
 
-  // 阶段图标那一半的诊断入口。刻意与上面那个对象分开：两套逻辑除了共用幂等闸，
-  // 没有任何共享状态，各自的测试入口也各归各。
   globalThis.__phaseZhPhaseIcons = {
     phases: PHASES,
     iconSource: PHASE_ICON_SOURCE,
@@ -1804,48 +1179,6 @@
     phaseName: PHASE_NAME,
     identifyPhase,
     resolvePhases,
-    // 卡图改写的纯函数：便于排查「这张卡为什么没换/为什么空白」
-    parseArtUrl,
-    rewriteUrl,
-    nextTierUrl,
-    urlFor,
-    ladderKey,
-    // 中→英印次换算（排查与单测用）
-    buildReverseMap,
-    zhToEnPrinting,
-    /**
-     * 现场诊断：在控制台执行 `__phaseZhCardArtReport()` 会返回一份可读的状态快照。
-     * 排查「某张卡为什么慢/为什么空白」时先看这个——它把每张卡的来源、加载状态和
-     * 换算表的就绪情况都列出来，不需要猜。
-     */
-    report: () => {
-      const images = [...document.querySelectorAll("img")].filter((i) => {
-        const v = i.getAttribute("src") ?? "";
-        return /scryfall|mtgch|card-art/.test(v);
-      });
-      const blank = images.filter((i) => i.complete && i.naturalWidth === 0);
-      const pending = images.filter((i) => !i.complete);
-      const tierOf = (v) => (/\/zhs\//.test(v) ? "大学院中文"
-        : /\/sf\//.test(v) ? "大学院英文"
-          : /card-art/.test(v) ? "同源中继" : "Scryfall");
-      const byTier = {};
-      for (const i of images) {
-        const t = tierOf(i.getAttribute("src") ?? "");
-        byTier[t] = (byTier[t] ?? 0) + 1;
-      }
-      return {
-        界面语言: document.documentElement.getAttribute("lang"),
-        反查表已就绪: localeMapReady,
-        反查表条数: zhToEnPrinting.size,
-        已走API换算次数: lookupCount,
-        缓存的换算结果: printLookup.size,
-        卡图总数: images.length,
-        按来源: byTier,
-        已加载失败: blank.length,
-        仍在加载: pending.length,
-        失败清单: blank.slice(0, 10).map((i) => i.getAttribute("src")),
-      };
-    },
     scanPhaseIcons,
   };
 

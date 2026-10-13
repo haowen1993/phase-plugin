@@ -74,7 +74,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.9.3";
+  const VERSION = "1.9.4";
   // ────────────────────────────────────────────────────────────────────────
   // 卡图：英文界面下改走大学院废墟
   // ────────────────────────────────────────────────────────────────────────
@@ -331,6 +331,22 @@
   // 两条不会撞，所以还原是**精确且唯一**的，不需要猜。
   const LOCALIZED_URL_TO_ENGLISH = new Map();
   const LOCALIZED_MAP_PATTERN = /scryfall-images\.[^/]*\.json(?:\?|$)/;
+  /**
+   * 那张表在固定位置，文件名里带语言代码（`zh` / `ja` / `de` …；英文界面不加载，
+   * 所以 `en` 是 404）。取自线上 bundle：
+   *
+   *   await fetch("https://data.phase-rs.dev/scryfall-images.v2.{lng}.json".replace("{lng}", e))
+   */
+  const LOCALIZED_MAP_BASE = "https://data.phase-rs.dev/scryfall-images.v2.";
+  /** 语言代码只取主标签：表是按 `zh` 分文件的，`zh-CN` 会 404。 */
+  function uiLocaleCode() {
+    try {
+      const lang = document.documentElement?.getAttribute("lang") ?? "";
+      return String(lang).trim().toLowerCase().split(/[-_]/)[0] || "";
+    } catch {
+      return "";
+    }
+  }
   /** 表里一条记录最多有这么多尺寸/面；用来给索引设个上限。 */
   const MAX_LOCALIZED_INDEX = 400000;
   let localeMapCaptured = false;
@@ -378,6 +394,52 @@
    * 应用看到的字节完全一样。包装函数在调用时而不是装配时读 `globalThis.fetch`，
    * 这样重复装配或与别的脚本共存时也不会把对方的包装吞掉。
    */
+  /**
+   * 自己把那张表取回来。**这是「截不到响应」时的兜底，也是主力。**
+   *
+   * ## 为什么必须有它（踩过）
+   *
+   * 截获 `fetch` 只在「书签在小工具在应用加载那张表**之前**执行」时才有效。而实际
+   * 用起来往往是：先打开页面、应用早就把表加载完了，然后才点书签 —— 于是永远截不到。
+   * 后果很隐蔽：中文界面下地址里是**中文印刷 id**，还原不出来就原样拿去问大学院，
+   * 得到一片 **404**，那些卡就完全不会被换成大学院的图（在 Safari 上就是这么暴露的）。
+   *
+   * 表有 ETag，第二次以后通常回 304，所以这一下几乎不花流量。
+   */
+  /** 已经取过表的语言代码。切语言要重取（表是按语言分文件的）。 */
+  let localeMapLoadedFor = null;
+
+  function fetchLocaleMap() {
+    const code = uiLocaleCode();
+    // 同一个语言只取一次。**按语言记**而不是「取过就不再取」：phase.rs 允许不刷新
+    // 页面就切语言，切到另一种非英文语言时得换一份表。
+    if (localeMapLoadedFor === code && localeMapPromise) return localeMapPromise;
+    if (!code || code === "en") {
+      // 英文界面应用不加载表（也没有 `en` 那份），地址里本来就是英文 id，不需要它。
+      localeMapLoadedFor = code;
+      localeMapPromise = Promise.resolve(0);
+      return localeMapPromise;
+    }
+    localeMapLoadedFor = code;
+    localeMapCaptured = true;
+    localeMapPromise = (async () => {
+      try {
+        const response = await fetch(`${LOCALIZED_MAP_BASE}${code}.json`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) return 0;
+        const added = buildLocalizedIndex(await response.json());
+        if (added > 0 && debug()) {
+          console.info(`[phase-rs-zh] 已取得本地化表（${code}）：${added} 条 URL → 英文印刷 id`);
+        }
+        return added;
+      } catch {
+        return 0;
+      }
+    })();
+    return localeMapPromise;
+  }
+
   function captureLocaleMap() {
     if (globalThis.__phaseZhFetchPatched === true) return;
     globalThis.__phaseZhFetchPatched = true;
@@ -390,6 +452,7 @@
         const url = typeof input === "string" ? input : (input?.url ?? "");
         if (!localeMapCaptured && LOCALIZED_MAP_PATTERN.test(url)) {
           localeMapCaptured = true;
+          if (!localeMapPromise) localeMapPromise = Promise.resolve(0);
           // clone 之后再读，避免消费掉应用要用的那份响应体。
           localeMapPromise = result
             .then((response) => (response.ok ? response.clone().json() : null))
@@ -1361,6 +1424,12 @@
     patchSetAttributeForArt();
     observeCardImages();
     captureLocaleMap();
+    // 中文等非英文界面下主动把表取回来——截获可能赶不上（页面早就加载完了）。
+    // **取回来之后必须重扫一遍**：在表到手之前，中文界面下的地址还原不出英文 id，
+    // 那些卡已经被跳过了。不重扫的话它们永远不会被处理（表现为一片 404）。
+    void fetchLocaleMap().then((added) => {
+      if (added > 0) scanCardImages();
+    });
     observePhaseIcons();
 
     const scan = () => {
@@ -1437,6 +1506,13 @@
     install,
     // 本地化表截获与精确还原（1.9.1）
     buildLocalizedIndex,
+    fetchLocaleMap,
+    /** 忘掉「表已取过」的记录，下次 fetchLocaleMap() 会重新取。测试用。 */
+    forgetLocaleMap: () => {
+      localeMapLoadedFor = null;
+      localeMapPromise = null;
+      localeMapCaptured = false;
+    },
     englishPrintingIdOf,
     localizedUrlToEnglish: LOCALIZED_URL_TO_ENGLISH,
     isMtgchUrl,

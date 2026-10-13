@@ -49,6 +49,18 @@ const WITHOUT_ZH = {
   image_uris: { small: NO_ZH_EN, normal: NO_ZH_EN, large: NO_ZH_EN },
 };
 
+/** 模拟应用那张本地化表：英文印刷 id → 该印刷的中文图 URL。 */
+const APP_MAP_FOR_LOCALE = {
+  schema_version: "v2",
+  [ID]: {
+    id: ZH_ID,
+    faces: [{
+      small: `https://cards.scryfall.io/small/front/9/a/${ZH_ID}.jpg?1783000360`,
+      normal: `https://cards.scryfall.io/normal/front/9/a/${ZH_ID}.jpg?1783000360`,
+    }],
+  },
+};
+
 let calls = [];
 /** 装好的 fetch stub：按 URL 里的印刷 id 返回上面两种形状之一。 */
 function stubFetch(handler) {
@@ -187,6 +199,7 @@ function reinstall() {
   // 否则跑到后面几个用例时它早已越过上限，fetchArtUris 直接返回 null，
   // 表现为「换了半天没换图」——是测试隔离问题，不是实现问题。（踩过。）
   art.resetArtRequestCount();
+  art.forgetLocaleMap();
   // Image 也要复位：有些用例会换成「把回调捏在手里」的替身，不复位就会串到下一个用例。
   globalThis.Image = makeImage();
   for (const key of Object.keys(art.artCache)) delete art.artCache[key];
@@ -256,8 +269,14 @@ describe("装配：只读补丁 + API 查询", () => {
     document.documentElement.lang = "zh-CN";
     reinstall();
     const img = mountImage(null);
+    const before = calls.filter((u) => u.includes("mtgch.com/api")).length;
     img.setAttribute("src", SCRYFALL);
-    expect(calls.length, "两种界面下属性写入都该发出请求").toBe(1);
+    // 只看大学院 API 的调用：非英文界面装配时会额外去取一次本地化表，
+    // 那不是「属性写入触发的」，不该算进来。
+    expect(
+      calls.filter((u) => u.includes("mtgch.com/api")).length - before,
+      "两种界面下属性写入都该发出大学院查询",
+    ).toBe(1);
     await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
   });
@@ -385,6 +404,43 @@ describe("只读与幂等", () => {
       expect(img.getAttribute("src"), url).toBe(url);
     }
     expect(calls.length).toBe(0);
+  });
+});
+
+describe("本地化表：截不到响应就自己去取（并且取回后重扫）", () => {
+  /**
+   * 这一条对应一个真实事故：中文界面下，如果那张表没拿到，地址里的**中文印刷 id**
+   * 就还原不成英文 id，会被原样拿去问大学院 —— 得到一片 404，那些卡永远不会被换。
+   *
+   * 触发条件很常见：先打开页面（应用早把表加载完了），然后才点书签 —— 此时
+   * `fetch` 补丁再也截不到那个响应。所以必须能自己去取。
+   */
+  it("自己取表的 URL 用的是 UI 语言的主标签（zh-CN → zh）", async () => {
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      asked.push(String(url));
+      if (String(url).includes("scryfall-images")) {
+        return { ok: true, status: 200, json: async () => APP_MAP_FOR_LOCALE };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    document.documentElement.lang = "zh-CN";
+    reinstall();
+    await art.fetchLocaleMap();
+    expect(
+      asked.some((u) => u === "https://data.phase-rs.dev/scryfall-images.v2.zh.json"),
+      "应当按主标签 zh 取表（zh-CN 那份是 404）",
+    ).toBe(true);
+    expect(art.localizedUrlToEnglish.size, "取回后应当建好索引").toBeGreaterThan(0);
+  });
+
+  it("英文界面不去取表", async () => {
+    const asked = [];
+    globalThis.fetch = async (url) => { asked.push(String(url)); return { ok: false, status: 404, json: async () => ({}) }; };
+    document.documentElement.lang = "en";
+    reinstall();
+    await art.fetchLocaleMap();
+    expect(asked.some((u) => u.includes("scryfall-images")), "英文界面不该去取表（en 那份是 404）").toBe(false);
   });
 });
 

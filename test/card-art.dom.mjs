@@ -78,6 +78,21 @@ function storageOf() {
 /** 让所有已排队的 Promise 回调跑完。 */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/**
+ * 等某个条件成立。
+ *
+ * 「先暖后换」之后换图不再是同步的：`warmThenApply` 要先 await 预热，happy-dom 里
+ * 又没有 `Image`，于是会多走几个微任务。用固定次数的 `settle()` 会变成脆断言。
+ */
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  return predicate();
+}
+
 function mountImage(src, srcset) {
   const img = document.createElement("img");
   if (src) img.setAttribute("src", src);
@@ -110,12 +125,33 @@ function makeStorage() {
 /** 给脚本用的存储。测试可以整体换掉它来模拟「新会话」。 */
 let storage = makeStorage();
 
+/**
+ * `Image` 替身：happy-dom 没有它，而脚本的「先暖后换」要用。
+ *
+ * 这里**立即算作加载成功**，于是 `warmOne` 同步 resolve —— 换图就回到「几个微任务
+ * 之后发生」，测试不必等真实网络。真实浏览器里失败/超时都会 settle，不会卡住。
+ */
+function makeImage() {
+  return class FakeImage {
+    set src(value) {
+      this._src = value;
+      // **同步**算作加载完成：于是「先暖后换」立刻就能换，测试只需推进微任务。
+      // 真实 Image 是异步的，但测试要的是「预热完成后会换」这个逻辑，不是计时。
+      if (typeof this.onload === "function") this.onload();
+    }
+    get src() { return this._src; }
+  };
+}
+
 let art;
 
 beforeAll(() => {
   document.documentElement.lang = "en";
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true, writable: true, value: storage,
+  });
+  Object.defineProperty(globalThis, "Image", {
+    configurable: true, writable: true, value: makeImage(),
   });
   vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-rs-zh/src/content.js" });
   art = globalThis.__phaseZhCardArt;
@@ -145,6 +181,14 @@ function reinstall() {
   // 三份状态都要清：请求表（含负结果）、持久化缓存、localStorage。
   // 少清一份就会串味——表现为后面某个用例莫名其妙地不发请求了。
   art.artRequests.clear();
+  // warmedUrls 现在是「从存储初始化」的，所以清空它 + 清存储即可回到干净状态
+  art.warmedUrls.clear();
+  // 这个计数是「单页最多新建几个请求」的闸，模块级、只增不减。测试里必须重置，
+  // 否则跑到后面几个用例时它早已越过上限，fetchArtUris 直接返回 null，
+  // 表现为「换了半天没换图」——是测试隔离问题，不是实现问题。（踩过。）
+  art.resetArtRequestCount();
+  // Image 也要复位：有些用例会换成「把回调捏在手里」的替身，不复位就会串到下一个用例。
+  globalThis.Image = makeImage();
   for (const key of Object.keys(art.artCache)) delete art.artCache[key];
   storage = makeStorage();
   Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: storage });
@@ -177,7 +221,7 @@ describe("装配：只读补丁 + API 查询", () => {
     stubFetch((url) => (url.includes(ID) ? WITH_ZH : null));
     const img = mountImage(SCRYFALL);
     art.queueArtLookups(img);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     expect(calls.length).toBe(1);
     expect(calls[0]).toBe("https://mtgch.com/api/v1/card/" + ID + "/");
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
@@ -190,7 +234,7 @@ describe("装配：只读补丁 + API 查询", () => {
     // 这一步模拟 React 写入。补丁应当在**写入的那一刻**就发出请求。
     img.setAttribute("src", SCRYFALL);
     expect(calls.length, "属性写入时就该发出请求，而不是等观察器").toBe(1);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
   });
 
@@ -214,7 +258,7 @@ describe("装配：只读补丁 + API 查询", () => {
     const img = mountImage(null);
     img.setAttribute("src", SCRYFALL);
     expect(calls.length, "两种界面下属性写入都该发出请求").toBe(1);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
   });
 
@@ -241,7 +285,7 @@ describe("装配：只读补丁 + API 查询", () => {
 
     const img = mountImage(zhSrc, `${zhSmall} 146w, ${zhSrc} 488w`);
     globalThis.__phaseZhCardArt.queueArtLookups(img);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     // 还原出的英文 id 就是 ID，所以问的是大学院的这个 id
     expect(calls.some((u) => u.includes(ID)), "应当用还原出的英文 id 去查大学院").toBe(true);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
@@ -253,7 +297,7 @@ describe("中文优先、没有中文回落英文", () => {
     stubFetch(() => WITH_ZH);
     const img = mountImage(SCRYFALL);
     art.queueArtLookups(img);
-    await settle();
+    await waitFor(() => (img.getAttribute("src") || "").includes("/zhs/"));
     expect(img.getAttribute("src")).toContain("/zhs/");
   });
 
@@ -261,7 +305,7 @@ describe("中文优先、没有中文回落英文", () => {
     stubFetch((url) => (url.includes(NO_ZH_ID) ? WITHOUT_ZH : null));
     const img = mountImage(NO_ZH_SRC);
     art.queueArtLookups(img);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === NO_ZH_EN);
     expect(img.getAttribute("src")).toBe(NO_ZH_EN);
     expect(img.getAttribute("src")).toContain("/sf/");
   });
@@ -280,7 +324,7 @@ describe("srcset 与尺寸一致性", () => {
     stubFetch(() => WITH_ZH);
     const img = mountImage(SCRYFALL, `${SCRYFALL_SMALL} 146w, ${SCRYFALL} 488w`);
     art.queueArtLookups(img);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
     const srcset = img.getAttribute("srcset");
     expect(srcset).toContain(ZH_SMALL);
@@ -295,7 +339,7 @@ describe("srcset 与尺寸一致性", () => {
     stubFetch(() => WITH_ZH);
     const img = mountImage(null, `${SCRYFALL} 488w, https://example.com/x.jpg 2x`);
     art.queueArtLookups(img);
-    await settle();
+    await waitFor(() => (img.getAttribute("srcset") || "").includes(ZH_NORMAL));
     expect(img.getAttribute("srcset")).toContain("https://example.com/x.jpg 2x");
     expect(img.getAttribute("srcset")).toContain(ZH_NORMAL);
   });
@@ -308,7 +352,7 @@ describe("只读与幂等", () => {
     const b = mountImage(SCRYFALL);
     const c = mountImage(SCRYFALL);
     art.queueArtLookups(a); art.queueArtLookups(b); art.queueArtLookups(c);
-    await settle();
+    await waitFor(() => [a, b, c].every((img) => img.getAttribute("src") === ZH_NORMAL));
     expect(calls.length).toBe(1);
     for (const img of [a, b, c]) expect(img.getAttribute("src")).toBe(ZH_NORMAL);
   });
@@ -317,7 +361,7 @@ describe("只读与幂等", () => {
     stubFetch(() => WITH_ZH);
     const img = mountImage(SCRYFALL);
     art.queueArtLookups(img);
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     const after = img.getAttribute("src");
     art.queueArtLookups(img);
     await settle();
@@ -337,9 +381,83 @@ describe("只读与幂等", () => {
       const img = mountImage(url);
       art.queueArtLookups(img);
       await settle();
+      await settle();
       expect(img.getAttribute("src"), url).toBe(url);
     }
     expect(calls.length).toBe(0);
+  });
+});
+
+describe("先暖后换：换上去之前先把图拉进缓存", () => {
+  /**
+   * 这是「图闪一下才出来」的正解。
+   *
+   * 应用那张 Scryfall 图在玩家本地是热的（交手、滚牌都用它），显示瞬时；而我们换上的
+   * 大学院图**本地是冷的**。直接把 `src` 换过去，中间那段没有图可显示——就是那一下闪。
+   * 所以必须先预热、再换。
+   *
+   * 这里直接测导出的 `warmThenApply`，而不是走整条 `queueArtLookups` 管线：后者会
+   * 先自己建一批预热探针，把测试替身的回调搅乱（踩过）。
+   */
+  it("预热有结果之后才写 src，且写的是大学院地址", async () => {
+    stubFetch(() => WITH_ZH);
+    reinstall();
+
+    const probes = [];
+    globalThis.Image = class {
+      set src(value) { this._src = value; probes.push(this); }
+      get src() { return this._src; }
+    };
+    art.warmedUrls.clear();
+
+    const img = mountImage(null);
+    img.setAttribute("src", SCRYFALL);
+    const done = art.warmThenApply(img, { small: ZH_SMALL, normal: ZH_NORMAL }, "normal");
+
+    // 探针发起了，但还没回调 → 此刻不该换 src
+    await settle();
+    expect(probes.length, "应当先发起预热").toBeGreaterThan(0);
+    expect(img.getAttribute("src"), "预热没完成就不该换 —— 那正是闪的来源").toBe(SCRYFALL);
+
+    for (const probe of probes.splice(0)) probe.onload?.();
+    await done;
+    expect(img.getAttribute("src")).toBe(ZH_NORMAL);
+    expect(art.warmedUrls.has(ZH_NORMAL), "换过之后应当记下已预热").toBe(true);
+  });
+
+  it("已经暖过的地址：同步直接换，不再建探针", async () => {
+    reinstall();
+    let probes = 0;
+    globalThis.Image = class {
+      set src(value) { this._src = value; probes += 1; }
+      get src() { return this._src; }
+    };
+    art.warmedUrls.clear();
+    art.warmedUrls.add(ZH_NORMAL);
+    art.warmedUrls.add(ZH_SMALL);
+
+    const img = mountImage(null);
+    img.setAttribute("src", SCRYFALL);
+    await art.warmThenApply(img, { small: ZH_SMALL, normal: ZH_NORMAL }, "normal");
+    expect(probes, "已经暖过就不该再发预热请求").toBe(0);
+    expect(img.getAttribute("src")).toBe(ZH_NORMAL);
+  });
+
+  it("预热失败也照样换（不能让玩家以为功能坏了）", async () => {
+    reinstall();
+    const probes = [];
+    globalThis.Image = class {
+      set src(value) { this._src = value; probes.push(this); }
+      get src() { return this._src; }
+    };
+    art.warmedUrls.clear();
+    const img = mountImage(null);
+    img.setAttribute("src", SCRYFALL);
+    const done = art.warmThenApply(img, { small: ZH_SMALL, normal: ZH_NORMAL }, "normal");
+    await settle();
+    for (const probe of probes.splice(0)) probe.onerror?.();
+    await done;
+    expect(img.getAttribute("src"), "预热失败也必须换").toBe(ZH_NORMAL);
   });
 });
 
@@ -349,7 +467,7 @@ describe("持久化缓存：内存优先，落盘一次", () => {
     reinstall();
     const a = mountImage(SCRYFALL);
     art.queueArtLookups(a);
-    await settle();
+    await waitFor(() => a.getAttribute("src") === ZH_NORMAL);
     expect(calls.length).toBe(1);
     // 清掉网络层：如果它还要发请求，就会拿到 null
     stubFetch(() => null);
@@ -402,7 +520,7 @@ describe("持久化缓存：内存优先，落盘一次", () => {
     reinstall();
     const img = mountImage(SCRYFALL);
     expect(() => art.queueArtLookups(img)).not.toThrow();
-    await settle();
+    await waitFor(() => img.getAttribute("src") === ZH_NORMAL);
     expect(img.getAttribute("src")).toBe(ZH_NORMAL);
     expect(() => art.flushArtCache()).not.toThrow();
   });

@@ -74,7 +74,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.9.2";
+  const VERSION = "1.9.3";
   // ────────────────────────────────────────────────────────────────────────
   // 卡图：英文界面下改走大学院废墟
   // ────────────────────────────────────────────────────────────────────────
@@ -165,6 +165,11 @@
   /** 单页最多新建几个请求，防止一次铺满整个牌库时把接口打爆。 */
   const MAX_ART_REQUESTS = 400;
   let artRequestCount = 0;
+
+  /** 重置「本页最多新建几个请求」的计数。测试要重复装配时用。 */
+  function resetArtRequestCount() {
+    artRequestCount = 0;
+  }
 
   /**
    * 持久化缓存：**内存里只留一份，落盘每页只做一次**。
@@ -442,6 +447,112 @@
     return replacement ?? null;
   }
 
+  // ── 先暖后换（这是「先空白、等一会儿才出图」的正解）────────────────────
+  //
+  // ## 为什么必须这样
+  //
+  // 两件事叠在一起：
+  //
+  //   1. **Scryfall 很慢。** 实测冷启动：Scryfall 图 **1025ms**、大学院图 **79ms**。
+  //      不装书签时看到的「先空白过会才出图」，就是这个原因——与我们无关。
+  //   2. **应用那张图在玩家本地是热的。** 玩家交手、滚牌用的都是 Scryfall 那张，
+  //      它已经在浏览器缓存里，显示是瞬时的。而我们换上的是**大学院的图**——CDN 侧
+  //      很快（~79ms），但**本地是冷的**，得真下。
+  //
+  // 于是「把快的换成要现下的」，中间那段没有图可显示——就是空白。
+  //
+  // ## 解法
+  //
+  // **先把大学院的图拉进缓存，暖好了再换 `src`。** 换的那一刻浏览器直接命中缓存
+  // （实测 8ms），屏幕上不会有空窗。
+  //
+  // 反过来的做法（一边预热一边立刻换）更糟：实测首次要 616ms，两边在抢带宽。
+  /**
+   * 已经暖过的地址。**跨页面保留**（存 localStorage）：大学院图床是
+   * `cache-control: public, max-age=31536000, immutable`，一年不可变——所以预热过的
+   * 地址下次打开页面时浏览器缓存里仍然有，可以直接算暖。
+   *
+   * 不这样做的话，每次刷新页面后**第一次**悬停都要重下一次（实测 826ms），还是闪。
+   */
+  const WARMED_KEY = "phaseZhMtgchWarmedV1";
+  /** 记住的地址上限。超了就从最旧的开始丢。 */
+  const MAX_WARMED = 2000;
+
+  const warmedUrls = (() => {
+    try {
+      if (!storageAvailable()) return new Set();
+      const raw = JSON.parse(localStorage.getItem(WARMED_KEY) ?? "[]");
+      return new Set(Array.isArray(raw) ? raw.filter((u) => typeof u === "string") : []);
+    } catch {
+      return new Set();
+    }
+  })();
+
+  let warmedDirty = false;
+  let warmedFlushScheduled = false;
+
+  function flushWarmed() {
+    warmedFlushScheduled = false;
+    if (!warmedDirty) return;
+    warmedDirty = false;
+    if (!storageAvailable()) return;
+    try {
+      let list = [...warmedUrls];
+      // 丢了最旧的（Set 保持插入顺序），别让它无限长。
+      if (list.length > MAX_WARMED) list = list.slice(list.length - MAX_WARMED);
+      localStorage.setItem(WARMED_KEY, JSON.stringify(list));
+    } catch { /* 写不进去不影响本页 */ }
+  }
+
+  function rememberWarmed(url) {
+    warmedUrls.add(url);
+    warmedDirty = true;
+    if (warmedFlushScheduled) return;
+    warmedFlushScheduled = true;
+    setTimeout(flushWarmed, 2000);
+  }
+
+  /** 预热一张图；已暖过则同步返回 true。失败/超时返回 false，不写入 warmedUrls。 */
+  const WARM_TIMEOUT_MS = 3000;
+
+  function warmOne(url) {
+    if (typeof url !== "string") return Promise.resolve(false);
+    if (warmedUrls.has(url)) return Promise.resolve(true);
+    if (typeof Image !== "function") return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const probe = new Image();
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (ok) rememberWarmed(url);
+        resolve(ok);
+      };
+      const timer = setTimeout(() => finish(false), WARM_TIMEOUT_MS);
+      probe.onload = () => finish(true);
+      probe.onerror = () => finish(false);
+      probe.src = url;
+    });
+  }
+
+  /**
+   * 把 `uris` 里用得到的尺寸暖好，然后才换上去。
+   *
+   * 超时也要换：宁可显示一张正在加载的图，也不要一直停在应用原来那张上——否则
+   * 玩家会以为这个功能坏了。
+   */
+  async function warmThenApply(element, uris, wanted) {
+    const targets = [uris[wanted], uris.normal].filter(Boolean);
+    if (targets.some((url) => !warmedUrls.has(url))) {
+      await Promise.race([
+        Promise.all(targets.map(warmOne)),
+        new Promise((r) => setTimeout(r, WARM_TIMEOUT_MS + 200)),
+      ]);
+    }
+    if (element.isConnected) applyArt(element, uris);
+  }
+
   /**
    * 把一个 `<img>` 换成大学院的地址。**这是本区块唯一的写入点。**
    *
@@ -480,16 +591,15 @@
         if (isMtgchUrl(url)) continue;
         const printingId = englishPrintingIdOf(url);
         if (!printingId) continue;
-        const pending = artRequests.get(printingId);
-        if (pending) {
-          // 已经在查（或已缓存）：直接应用，不用再排一次微任务。
-          pending.then((uris) => {
-            if (uris && element.isConnected) applyArt(element, uris);
-          });
-          continue;
-        }
-        fetchArtUris(printingId).then((uris) => {
-          if (uris && element.isConnected) applyArt(element, uris);
+        // 这张地址要的是哪个尺寸：换的时候要换同尺寸，预热也要预热同一个。
+        const wanted = (parseScryfallImageUrl(url) ?? { size: "normal" }).size;
+        const pending = artRequests.get(printingId) ?? fetchArtUris(printingId);
+        pending.then((uris) => {
+          if (!uris) return;
+          // **先暖后换。** 换成冷的地址会留下「空白」（应用那张是热的、我们这张不是）。
+          // 暖好之后再换，屏幕上是「应用那张继续显示 → 直接变成大学院的图」。
+          // 已经暖过的话这一步同步完成，约 8ms。
+          void warmThenApply(element, uris, wanted);
         });
       }
     }
@@ -1266,9 +1376,9 @@
     // 从 bfcache 回来时页面可能被浏览器整体恢复过一遍，补一次扫描。
     window.addEventListener("pageshow", scan);
     // 页面要走了就把还没落盘的缓存写掉——那时候丢数据最可惜。
-    window.addEventListener("pagehide", flushArtCache);
+    window.addEventListener("pagehide", () => { flushArtCache(); flushWarmed(); });
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") flushArtCache();
+      if (document.visibilityState === "hidden") { flushArtCache(); flushWarmed(); }
     });
     console.info(`[phase-rs-zh] 已启用 v${VERSION}（卡图 + 阶段图标）`);
   }
@@ -1333,6 +1443,11 @@
     // 缓存落盘（测试要立刻落盘，不等定时器）
     flushArtCache,
     sanitizeArtCache,
+    warmOne,
+    warmThenApply,
+    flushWarmed,
+    resetArtRequestCount,
+    warmedUrls,
     artCache,
     /** 断开本脚本挂上的全部观察器。测试要重装环境时用；生产里重复点击也不会走到这。 */
     disconnectObservers: () => {

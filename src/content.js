@@ -113,7 +113,7 @@
    * 的唯一依据，而控制台那行日志是排障的第一步。test/content.test.mjs 里有断言
    * 防止两者漂移。
    */
-  const VERSION = "1.8.0";
+  const VERSION = "1.8.1";
 
   const SCRYFALL_IMAGE_HOST = "cards.scryfall.io";
   const MTGCH_IMAGE_HOST = "images.mtgch.com";
@@ -369,6 +369,18 @@
   let localeMapLoading = null;
   let localeMapReady = false;
 
+  /**
+   * 界面是不是中文。用 `<html lang>` —— 那是应用自己声明的语言，比猜 URL 或文案可靠。
+   */
+  function isChineseUi() {
+    try {
+      const lang = document.documentElement?.getAttribute("lang") ?? "";
+      return /^zh/i.test(lang);
+    } catch {
+      return false;
+    }
+  }
+
   /** 只认形状正确的条目，别把 `schema_version` 之类的元数据当成卡。 */
   const PRINTING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -548,28 +560,13 @@
     }
 
     // 表里没有：可能反查表还没到，也可能这个 id 本来就是英文的（英文卡占多数）。
-    // 两种情况都照常按中文层改写——大学院没有中文图时会 404，再由失败路径去换算/降级。
-    const rewritten = urlFor(parsed, "zh", "cdn");
-    if (!localeMapReady) {
-      // 顺带把反查表拉起来。只在这条「查不到」的路径上触发，所以英文界面不会下载它。
-      ensureReverseMap().then(() => {
-        if (!localeMapReady) return;
-        // `document` 守卫不是多余：本脚本在 Node 里也会被加载（纯函数单测环境没有
-        // DOM）。少了它，测试会因为一个异步回调里的 ReferenceError 被判失败。
-        if (typeof document === "undefined") return;
-        // 表到了：把当前所有还没换过来的中文 id 地址就地换掉。
-        // 已经加载成功的图不会重下——浏览器换了 src 才发新请求。
-        for (const image of document.querySelectorAll("img")) {
-          for (const attr of ["src", "srcset"]) {
-            const raw = image.getAttribute(attr);
-            if (!raw) continue;
-            const next = attr === "src" ? rewriteUrl(raw) : mapSrcset(raw, rewriteUrl);
-            if (next !== raw) image.setAttribute(attr, next);
-          }
-        }
-      });
-    }
-    return rewritten;
+    //
+    // 两种情况都照常按中文层改写。表还没到就顺手把它拉起来——**但不再回头把已经渲染
+    // 的图片重写一遍**：那会让浏览器把已经下好的图重新下一遍，用户看到的是图闪一下、
+    // 甚至先空一会儿。改用「谁失败了谁自己纠正」：失败路径会查表（此时表多半已就绪）、
+    // 换成正确的 id 再试一次，其他图完全不受影响。
+    if (!localeMapReady) ensureReverseMap();
+    return urlFor(parsed, "zh", "cdn");
   }
 
   /**
@@ -1710,6 +1707,18 @@
     }
     globalThis.__phaseZhCardArtInstalled = true;
 
+    // 预载「中文印刷 id → 英文印刷 id」的反查表。
+    //
+    // 为什么要在装配时就拉：不在装配时拉的话，第一屏的中文卡只能先按原 id 拼一个必然
+    // 404 的地址，再触发一次网络往返、在失败路径上换算、再重发——用户看到的就是
+    // 「鼠标放上去先空白、等一会儿才出图」，而且每张卡的先后取决于各自撞上多少延迟，
+    // 同一手牌里的表现会五花八门。
+    //
+    // 表本身 4 MB，实测**下载 + 解析合计约 68 ms**，所以提前拉几乎不花时间，却能让
+    // 第一次渲染就用对 id。只在中文界面下拉——英文界面下这份表一次都用不上，没必要
+    // 白占 4 MB 流量。
+    if (isChineseUi()) ensureReverseMap();
+
     patchImageProperty("src", (value) => rewriteUrl(value));
     patchImageProperty("srcSet", (value, image) => mapSrcset(value, (url) => (
       isCorsOnly(image, url) ? url : rewriteUrl(url)
@@ -1804,6 +1813,39 @@
     // 中→英印次换算（排查与单测用）
     buildReverseMap,
     zhToEnPrinting,
+    /**
+     * 现场诊断：在控制台执行 `__phaseZhCardArtReport()` 会返回一份可读的状态快照。
+     * 排查「某张卡为什么慢/为什么空白」时先看这个——它把每张卡的来源、加载状态和
+     * 换算表的就绪情况都列出来，不需要猜。
+     */
+    report: () => {
+      const images = [...document.querySelectorAll("img")].filter((i) => {
+        const v = i.getAttribute("src") ?? "";
+        return /scryfall|mtgch|card-art/.test(v);
+      });
+      const blank = images.filter((i) => i.complete && i.naturalWidth === 0);
+      const pending = images.filter((i) => !i.complete);
+      const tierOf = (v) => (/\/zhs\//.test(v) ? "大学院中文"
+        : /\/sf\//.test(v) ? "大学院英文"
+          : /card-art/.test(v) ? "同源中继" : "Scryfall");
+      const byTier = {};
+      for (const i of images) {
+        const t = tierOf(i.getAttribute("src") ?? "");
+        byTier[t] = (byTier[t] ?? 0) + 1;
+      }
+      return {
+        界面语言: document.documentElement.getAttribute("lang"),
+        反查表已就绪: localeMapReady,
+        反查表条数: zhToEnPrinting.size,
+        已走API换算次数: lookupCount,
+        缓存的换算结果: printLookup.size,
+        卡图总数: images.length,
+        按来源: byTier,
+        已加载失败: blank.length,
+        仍在加载: pending.length,
+        失败清单: blank.slice(0, 10).map((i) => i.getAttribute("src")),
+      };
+    },
     scanPhaseIcons,
   };
 

@@ -739,7 +739,7 @@ npm run build:preview
 
 产出两份：
 
-- `docs/icon-comparison.png` —— README 里内联的那张对照表（GitHub 直接渲染图片）
+- `docs/icon-comparison.png` —— 12 个阶段的完整对照表（GitHub 直接渲染图片）
 - `preview/current-icons.html` —— 交互页，多出 10px 与激活态、以及「按真实阶段栏排列」
 
 **原版图标是从 phase.rs 源码里解析的**，不手抄：读
@@ -891,7 +891,8 @@ phase-plugin/
 │   └── phase-plugin.bookmarklet.js          未编码的压缩正文（供审阅）
 ├── docs/
 │   ├── index.html                          GitHub Pages 入口，与 dist/install.html 逐字节相同
-│   ├── icon-comparison.png                 README 内联的图标对照表（由 build:preview 生成）
+│   ├── icon-comparison.png                 12 个阶段的完整对照表（由 build:preview 生成）
+│   ├── img/                                README 的前后对比截图（手工截取，不参与构建）
 │   └── .nojekyll                           让 Pages 跳过 Jekyll 处理
 ├── preview/
 │   └── current-icons.html                  交互式图标对照页（由 build:preview 生成）

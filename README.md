@@ -1,64 +1,38 @@
 # phase-plugin
 
-给 [phase.rs](https://phase-rs.dev) 网页版加两个功能的**书签小工具**，不用装任何东西：
+给 [phase.rs](https://phase-rs.dev) 网页版换两样东西：**简体中文卡图**、**一眼能分辨的阶段图标**。书签小工具，零安装。
 
-1. **卡图**换成[大学院废墟](https://mtgch.com)的图（有简体中文图就用中文图）
-2. **回合阶段图标**换成更好认的图形（12 个，来自 [Tabler Icons](https://tabler.io/icons)）
-
-## 安装
-
-**👉 [点这里打开安装页](https://haowen1993.github.io/phase-plugin/)**
-
-把页面里的按钮拖到书签栏，然后打开 phase-rs.dev **点一下这个书签**。
-
-> ⚠️ **每次刷新或重开页面都要再点一次。** 这是「零安装」的代价。
-
-点一下两个功能一起生效。控制台会打印 `[phase-plugin] 已启用 v…`。
+**👉 [打开安装页](https://haowen1993.github.io/phase-plugin/)** —— 把按钮拖到书签栏，在 phase-rs.dev 点一下（刷新或重开页面后要再点一次）。
 
 ## 卡图
 
-| 这张卡 | 你会看到 |
-| --- | --- |
-| 大学院有简体中文图 | **中文卡图** |
-| 没有中文图 | 大学的英文图 |
-| 查不到 | 原来的 Scryfall 图（兜底，几乎不会发生） |
-
-正面、背面（双面牌）、大小尺寸、衍生物都覆盖。中英文界面都生效。
-
-换图前会先把新图拉进缓存，所以**不会闪**——原来的图一直显示到新图就绪（实测 8~9ms）。
+| 原来 | 现在 |
+|:---:|:---:|
+| ![英文卡图](docs/img/card-before.jpg) | ![中文卡图](docs/img/card-after.jpg) |
 
 ## 阶段图标
 
-原版有两处一眼分不出，这是换图标的主要动机：
+| 原来 | 现在 |
+|:---:|:---:|
+| ![原来的阶段栏](docs/img/phase-before.jpg) | ![现在的阶段栏](docs/img/phase-after.jpg) |
 
-- **两个主阶段是同一个菱形**（原版 `PreCombatMain` 与 `PostCombatMain` 源码一模一样）→ 现在是方框 `1` 和方框 `2`
-- **战斗开始与战斗伤害都是交叉双剑**（只差中心一个圆点）→ 现在是交叉双剑与火焰
+两个主阶段原来是同一个菱形；战斗开始与战斗伤害原来是同一个叉。
 
-完整清单（含 10px / 14px / 激活三态渲染）：**[preview/current-icons.html](preview/current-icons.html)**
+| 原来 | 现在 |
+|:---:|:---:|
+| ![原来的战斗阶段栏](docs/img/combat-before.jpg) | ![现在的战斗阶段栏](docs/img/combat-after.jpg) |
 
-尺寸与颜色行为跟原版一致：未激活灰、悬停变白、激活纯白；手机 10px、桌面 14px。
+12 个阶段的完整对照：**[docs/icon-comparison.png](docs/icon-comparison.png)**；交互版（含 10px 与激活态）：**[preview/current-icons.html](preview/current-icons.html)**。
 
-## 常见问题
+## 说明
 
-**点了没反应？** 多半是忘了点书签，或刷新后没再点。
-
-**有些卡还是英文？** 正常——大学院没有那些印刷的中文图，自动用了它的英文图。
-
-**阶段图标没换或只换了一部分？** 脚本对**认不出来的容器故意不动**（宁可保留原版，也不把
-图标画到错误的阶段上）。若确认点过书签仍有漏，告诉我它出现在哪里。
-
-**想换浏览器或换电脑？** 新建书签，地址填 `dist/phase-plugin.bookmarklet.txt` 里那一行。
-
-**卡图变成文字占位卡？** 不正常，请告诉我卡名。
+- 卡图中文优先；没有中文图就用大学院废墟的英文图，查不到才回落 Scryfall。正反面、大小图、衍生物都覆盖。
+- 换图前先把新图拉进缓存，**不会闪**。
+- 图标认不出来的容器**故意不动**——宁可保留原版，也不把图标画到错误的阶段上。
 
 ## 许可
 
-代码 [MIT](LICENSE)。阶段图标来自 [Tabler Icons](https://tabler.io/icons)（MIT）。
-第三方资产的版权声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+代码 [MIT](LICENSE)；阶段图标来自 [Tabler Icons](https://tabler.io/icons)（MIT），第三方声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+**卡图不在本仓库许可范围内**：图由大学院废墟提供，本工具只在显示时把浏览器指向那个图床，不复制、不缓存、不再分发。
 
-**卡图不在本仓库许可范围内**——它们由大学院废墟提供，本工具只在显示时把浏览器指向那个
-图床，不复制、不缓存、不再分发。
-
-## 想深入了解
-
-实现细节、踩过的坑、为什么这么设计、怎么重新构建——都在 **[NOTES.md](NOTES.md)**。
+实现细节、踩过的坑、怎么重新构建：**[NOTES.md](NOTES.md)**。

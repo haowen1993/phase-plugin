@@ -19,3 +19,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+────────────────────────────────────────────────────────────────────────────
+适用范围（上面 MIT 条款的边界说明；以下不是额外限制）
+────────────────────────────────────────────────────────────────────────────
+
+上面这份 MIT 许可覆盖**本仓库自己写的代码与文档**。
+
+不在覆盖范围内的东西：
+
+- **回合阶段图标**（`src/content.js` 里的 `PHASE_ICON_INNER`，12 个 SVG 路径）逐字取自
+  [Tabler Icons](https://tabler.io/icons)，版权归 Paweł Kuna，同样以 MIT 授权。
+  完整的版权声明与许可全文见 THIRD-PARTY-NOTICES.md。
+
+- **卡图**不在本仓库的分发内容里。本工具不复制、不缓存、不再分发任何卡图，只在显示时
+  把浏览器指向大学院废墟（mtgch.com）的图床。卡图的权利归属与使用条款由该站点及其上游
+  来源决定。
+
+- **Magic: The Gathering** 是 Wizards of the Coast 的商标。本工具是非官方作品，与
+  Wizards of the Coast 及 phase.rs 项目均无关联。

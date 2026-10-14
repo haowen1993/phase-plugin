@@ -117,59 +117,55 @@ function toBookmarkletUrl(code) {
 
 function installPage(bookmarkletUrl, codeHash, codeBytes) {
   // 正文已由 encodeURIComponent 编码，不含引号/尖括号/&，可安全放进 HTML 属性。
+  //
+  // 页面刻意很短：安装步骤本身就是全部内容。功能说明留给 README，排障留给 NOTES——
+  // 装的时候不需要读那些。
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>安装 phase-plugin（Phase 中文卡图）书签</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安装 phase-plugin</title>
 <style>
   :root { color-scheme: light dark; }
-  body { font: 15px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif;
-         max-width: 46rem; margin: 3rem auto; padding: 0 1.25rem; }
-  h1 { font-size: 1.35rem; }
-  .drag { display: inline-block; margin: 1.25rem 0; padding: .7rem 1.4rem;
+  body { font: 16px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif;
+         max-width: 34rem; margin: 12vh auto; padding: 0 1.25rem; }
+  .drag { display: inline-block; margin: .5rem 0; padding: .8rem 1.6rem;
           border-radius: .6rem; background: #c8102e; color: #ffd400; font-weight: 700;
-          text-decoration: none; border: 2px solid #8f0b20; }
-  ol { padding-left: 1.4rem; } li { margin: .4rem 0; }
+          font-size: 1.1rem; text-decoration: none; border: 2px solid #8f0b20; }
+  ol { padding-left: 1.4rem; }
+  li { margin: .5rem 0; }
   code { background: rgba(127,127,127,.16); padding: .1rem .35rem; border-radius: .25rem; }
-  textarea { width: 100%; height: 7rem; font: 12px/1.5 ui-monospace, monospace; }
-  .note { background: rgba(200,16,46,.08); border-left: 3px solid #c8102e;
-          padding: .7rem 1rem; border-radius: .3rem; }
-  footer { margin-top: 2rem; font-size: .85rem; opacity: .7; }
+  .note { color: #b45309; }
+  details { margin-top: 2rem; font-size: .9rem; }
+  textarea { width: 100%; height: 5rem; margin-top: .5rem;
+             font: 12px/1.5 ui-monospace, monospace; }
+  footer { margin-top: 2.5rem; font-size: .8rem; opacity: .55; }
 </style>
 </head>
 <body>
 <h1>安装 phase-plugin</h1>
-<p>把 <a href="https://phase-rs.dev">phase.rs</a> 网页版的卡图换成<a href="https://mtgch.com">大学院废墟</a>（mtgch.com）的简体中文图。
-   不用装扩展，不用装脚本管理器。</p>
 
-<p>把下面这个按钮 <strong>拖到书签栏</strong>（在多数浏览器里 <code>⌥⌘B</code> 或
-   <code>Ctrl+Shift+B</code> 可以显示书签栏）。拖不动就右键它，选「添加到书签」。</p>
+<p>把下面这个按钮 <strong>拖到书签栏</strong>（拖不动就右键它，选「添加到书签」）：</p>
 
 <p><a class="drag" href="${bookmarkletUrl}">中文卡图</a></p>
 
 <ol>
-  <li>打开 <code>https://phase-rs.dev</code>，进入牌桌或牌组。</li>
-  <li><strong>点一下书签栏里的「中文卡图」</strong>，卡图就会变成大学院废墟的简体中文图。</li>
+  <li>打开 <a href="https://phase-rs.dev">phase-rs.dev</a></li>
+  <li><strong>点一下书签栏里的「中文卡图」</strong></li>
 </ol>
 
-<p class="note">
-  <strong>每次重新加载页面后都要再点一下。</strong>
-  页面内的跳转（换牌桌、翻牌组）不需要——脚本一旦注入就管到本次加载结束。
-  这就是「一个书签、零安装」的代价。
-</p>
+<p class="note">⚠️ 每次刷新或重开页面都要再点一次。页面内的跳转不用。</p>
 
-<p>换浏览器或换设备不用重新装：在新浏览器里新建一个书签，把它的<strong>地址</strong>
-   整段替换成下面这行即可。</p>
-
-<h2>备用：手动粘贴地址</h2>
-<p>如果拖拽和右键都不灵，就新建一个书签，把它的<strong>地址</strong>整段替换成下面这行：</p>
-<textarea readonly onclick="this.select()">${bookmarkletUrl}</textarea>
+<details>
+  <summary>拖不动？手动粘贴地址</summary>
+  <p>新建一个书签，把它的<strong>地址</strong>整段替换成下面这行：</p>
+  <textarea readonly onclick="this.select()">${bookmarkletUrl}</textarea>
+</details>
 
 <footer>
-  phase-plugin · 正文 ${codeBytes} 字节（百分号编码后 ${bookmarkletUrl.length} 字节）·
-  由 <code>src/content.js</code> 经 esbuild 压缩生成 ·
-  内容 sha256: <code>${codeHash}</code>
+  phase-plugin · 正文 ${codeBytes} 字节 ·
+  由 <code>src/content.js</code> 压缩生成 · sha256 <code>${codeHash}</code>
 </footer>
 </body>
 </html>

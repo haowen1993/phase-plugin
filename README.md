@@ -31,6 +31,7 @@
 ## 许可
 
 代码 [MIT](LICENSE)；阶段图标来自 [Tabler Icons](https://tabler.io/icons)（MIT），第三方声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
-**卡图不在本仓库许可范围内**：图由 [大学院废墟](https://mtgch.com) 提供，本工具仅调用大学院废墟的API。
+
+**卡图不在本仓库许可范围内**：卡图由 [大学院废墟](https://mtgch.com) 提供，本工具仅调用大学院废墟的API。
 
 实现细节、踩过的坑、怎么重新构建：**[NOTES.md](NOTES.md)**。

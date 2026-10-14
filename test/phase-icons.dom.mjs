@@ -177,7 +177,7 @@ function iconOf(phase) {
 }
 
 beforeAll(() => {
-  vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-rs-zh/src/content.js" });
+  vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-plugin/src/content.js" });
 });
 
 /** 每个用例前彻底清场：图标识别依赖组内数量，残留节点会串味。 */
@@ -458,7 +458,7 @@ describe("阶段图标：幂等与重渲染", () => {
     mount(playerHud());
     icons().scanPhaseIcons();
     // 再跑一次脚本本体：install() 会走「已装配」分支，只补扫描
-    vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-rs-zh/src/content.js" });
+    vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-plugin/src/content.js" });
     expect(iconOf("Draw")).not.toBeNull();
   });
 });

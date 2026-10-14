@@ -1,4 +1,4 @@
-# phase-rs-zh 技术笔记
+# phase-plugin 技术笔记
 
 这份文档面向「要改这个工具」或「想知道它为什么这么做」的人。
 **安装与日常使用看 [README.md](README.md) 就够了。**
@@ -16,7 +16,7 @@
 但**工具本身照常工作**。
 
 所以：phase.rs 的仓库可以不要。本仓库是独立仓库
-（<https://github.com/haowen1993/phase-rs-zh>），克隆它就能开始开发，不需要
+（<https://github.com/haowen1993/phase-plugin>），克隆它就能开始开发，不需要
 phase.rs 的任何东西。想跑那个可选的覆盖率守卫时，才需要另外克隆一份 phase.rs。
 
 ## 效果与实测覆盖率
@@ -310,7 +310,7 @@ node tools/check-live.mjs    # 第三方那一侧（需要网络，在本仓库�
 # 应用那一侧：该脚本读 client/public/scryfall-*.json，所以要在 phase.rs 克隆的
 # 根目录下运行，指向本仓库里的脚本（本仓库不需要是 phase.rs 的子目录）
 cd /path/to/phase-rs-clone
-node /path/to/phase-rs-zh/tools/check-app-data-coverage.mjs
+node /path/to/phase-plugin/tools/check-app-data-coverage.mjs
 ```
 
 再用浏览器打开应用点一次书签，随便看一张卡。三条都过就什么都不用做。
@@ -857,7 +857,7 @@ URL** 发一次 `Range: bytes=0-0` 的 `fetch`，只为读状态码（404 = 这�
 
 - **发文件**：把 `dist/install.html` 发过去（邮件、AirDrop、网盘都行）。对方用自己的
   浏览器打开，把按钮拖到书签栏就完事。文件纯自包含，不需要托管。
-- **发一行字**：把 `dist/phase-rs-zh.bookmarklet.txt` 里那一整行（约 6.4 KB）连同
+- **发一行字**：把 `dist/phase-plugin.bookmarklet.txt` 里那一整行（约 6.4 KB）连同
   「新建书签 → 把地址替换成这一行 → 打开 phase.rs 后点它」贴进聊天即可。
 - **挂一个链接**：想给一群人用就把它挂到任意静态托管上分享 URL。
   例如用 GitHub Pages（`git subtree` 不一定可用，所以用临时目录建分支）：
@@ -866,7 +866,7 @@ URL** 发一次 `Range: bytes=0-0` 的 `fetch`，只为读状态码（404 = 这�
   cd /tmp && rm -rf zh-pages && mkdir zh-pages && cd zh-pages
   git init -q -b gh-pages
   cp <本目录>/dist/install.html index.html
-  git add . && git commit -m "docs: phase-rs-zh 安装页"
+  git add . && git commit -m "docs: phase-plugin 安装页"
   git remote add origin <你的仓库地址>
   git push origin gh-pages   # 然后在仓库 Settings → Pages 里把 Source 选成 gh-pages
   ```
@@ -881,14 +881,14 @@ URL** 发一次 `Range: bytes=0-0` 的 `fetch`，只为读状态码（404 = 这�
 ## 文件结构
 
 ```
-phase-rs-zh/
+phase-plugin/
 ├── README.md                               安装与日常使用（短）
 ├── NOTES.md                                本文件：设计、维护、分发（长）
 ├── src/content.js                          全部逻辑——唯一真源
 ├── dist/
 │   ├── install.html                        安装页（拖拽 / 右键 / 复制地址）
-│   ├── phase-rs-zh.bookmarklet.txt         书签地址（javascript: 一行）
-│   └── phase-rs-zh.bookmarklet.js          未编码的压缩正文（供审阅）
+│   ├── phase-plugin.bookmarklet.txt         书签地址（javascript: 一行）
+│   └── phase-plugin.bookmarklet.js          未编码的压缩正文（供审阅）
 ├── docs/
 │   ├── index.html                          GitHub Pages 入口，与 dist/install.html 逐字节相同
 │   ├── icon-comparison.png                 README 内联的图标对照表（由 build:preview 生成）
@@ -924,13 +924,13 @@ phase-rs-zh/
 
 | 现象 | 原因与处理 |
 | --- | --- |
-| 完全没有变化 | 绝大多数情况是**忘了点书签**，或刷新后没再点。点了还没反应就看 Web Inspector 控制台有没有 `[phase-rs-zh] 已启用 v…`。 |
+| 完全没有变化 | 绝大多数情况是**忘了点书签**，或刷新后没再点。点了还没反应就看 Web Inspector 控制台有没有 `[phase-plugin] 已启用 v…`。 |
 | 点了书签但控制台没有那行 | 浏览器拦掉了 `javascript:` 地址，或你没把它建成书签（地址栏直接粘贴会被浏览器去掉 `javascript:` 前缀）。 |
 | 卡图变成文字占位 | 说明应用自己的降级链接手了。请记下卡名，并跑 `npm run check:live` 看映射是否已变化。 |
 | 一部分卡是英文 | 正常：大学院废墟没有这些印刷的中文图，已按设计降到英文层。 |
 | 网络面板出现 404 | 正常：那是中文层的判据，紧接着会降级或重试。只有持续 404 且最终裂图才是问题。 |
 | **时好时坏、同一张卡有时中文有时英文** | v1.1.0 已修。根因是图床那 4 个地址大多拒连，而旧版把「连不上」当成「没有中文图」。若在新版仍出现，`__phaseZhCardArtDebug = true` 后可在控制台看到每次是「原地重试」还是「降级」。 |
-| **阶段图标没换 / 只换了一部分** | 先确认点过书签。控制台应打印 `[phase-rs-zh] 已启用 v1.2.0`。若某个图标仍是原版，多半是它所在的容器不符合已知的四种结构（3 个 / 2 个 / 5 个战斗 / 12 个一组）——脚本对认不出来的容器**故意不动**，以免把图标画到错误的阶段上。把 `__phaseZhCardArtDebug = true` 打开可以看到结构判据与文案判据不一致的警告。 |
+| **阶段图标没换 / 只换了一部分** | 先确认点过书签。控制台应打印 `[phase-plugin] 已启用 v1.2.0`。若某个图标仍是原版，多半是它所在的容器不符合已知的四种结构（3 个 / 2 个 / 5 个战斗 / 12 个一组）——脚本对认不出来的容器**故意不动**，以免把图标画到错误的阶段上。把 `__phaseZhCardArtDebug = true` 打开可以看到结构判据与文案判据不一致的警告。 |
 | **阶段图标没换，但提示结构判据冲突** | 说明 phase.rs 改了阶段顺序或文案。结构判据优先（它是源码顺序），所以图标仍然是对的；那条警告是提醒你 `PHASE_TEXT` 表该更新了。 |
 | 中文卡图旁边小图（srcset 的 146w）是英文 | 检查网络面板里 `/zhs/small/…` 的状态。若为 404，说明该印刷只有大图有中文；这是图床的事实，不是脚本的问题。 |
 

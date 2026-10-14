@@ -4,8 +4,8 @@
  *
  *     node tools/build-bookmarklet.mjs
  *
- *   dist/phase-rs-zh.bookmarklet.js   压缩后的代码本体（供人审阅/比对）
- *   dist/phase-rs-zh.bookmarklet.txt  可直接粘贴为书签地址的 javascript: 一行
+ *   dist/phase-plugin.bookmarklet.js   压缩后的代码本体（供人审阅/比对）
+ *   dist/phase-plugin.bookmarklet.txt  可直接粘贴为书签地址的 javascript: 一行
  *   dist/install.html           拖拽安装页（Safari 上最省事的安装方式）
  *
  * 为什么必须压缩，而不是直接把 src/content.js 塞进 javascript: URL：
@@ -32,8 +32,8 @@ const REPO = join(ROOT, "..");
 
 const SOURCE_PATH = join(ROOT, "src", "content.js");
 const OUT_DIR = join(ROOT, "dist");
-const OUT_JS = join(OUT_DIR, "phase-rs-zh.bookmarklet.js");
-const OUT_TXT = join(OUT_DIR, "phase-rs-zh.bookmarklet.txt");
+const OUT_JS = join(OUT_DIR, "phase-plugin.bookmarklet.js");
+const OUT_TXT = join(OUT_DIR, "phase-plugin.bookmarklet.txt");
 const OUT_HTML = join(OUT_DIR, "install.html");
 
 /**
@@ -121,7 +121,7 @@ function installPage(bookmarkletUrl, codeHash, codeBytes) {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>安装 phase-rs-zh（Phase 中文卡图）书签</title>
+<title>安装 phase-plugin（Phase 中文卡图）书签</title>
 <style>
   :root { color-scheme: light dark; }
   body { font: 15px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif;
@@ -139,7 +139,7 @@ function installPage(bookmarkletUrl, codeHash, codeBytes) {
 </style>
 </head>
 <body>
-<h1>安装 phase-rs-zh</h1>
+<h1>安装 phase-plugin</h1>
 <p>把 <a href="https://phase-rs.dev">phase.rs</a> 网页版的卡图换成<a href="https://mtgch.com">大学院废墟</a>（mtgch.com）的简体中文图。
    不用装扩展，不用装脚本管理器。</p>
 
@@ -167,7 +167,7 @@ function installPage(bookmarkletUrl, codeHash, codeBytes) {
 <textarea readonly onclick="this.select()">${bookmarkletUrl}</textarea>
 
 <footer>
-  phase-rs-zh · 正文 ${codeBytes} 字节（百分号编码后 ${bookmarkletUrl.length} 字节）·
+  phase-plugin · 正文 ${codeBytes} 字节（百分号编码后 ${bookmarkletUrl.length} 字节）·
   由 <code>src/content.js</code> 经 esbuild 压缩生成 ·
   内容 sha256: <code>${codeHash}</code>
 </footer>

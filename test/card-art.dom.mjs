@@ -165,7 +165,7 @@ beforeAll(() => {
   Object.defineProperty(globalThis, "Image", {
     configurable: true, writable: true, value: makeImage(),
   });
-  vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-rs-zh/src/content.js" });
+  vm.runInThisContext(SCRIPT_SOURCE, { filename: "phase-plugin/src/content.js" });
   art = globalThis.__phaseZhCardArt;
 });
 

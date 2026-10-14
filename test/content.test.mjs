@@ -136,8 +136,8 @@ test("端到端：srcset 与 src 换成大学院后，尺寸选择不变", () =>
 
 // ── 书签小工具的格式前提 ────────────────────────────────────────────────
 
-const DIST_TEXT = readFileSync(new URL("../dist/phase-rs-zh.bookmarklet.txt", import.meta.url), "utf8").trim();
-const DIST_JS = readFileSync(new URL("../dist/phase-rs-zh.bookmarklet.js", import.meta.url), "utf8");
+const DIST_TEXT = readFileSync(new URL("../dist/phase-plugin.bookmarklet.txt", import.meta.url), "utf8").trim();
+const DIST_JS = readFileSync(new URL("../dist/phase-plugin.bookmarklet.js", import.meta.url), "utf8");
 
 test("书签小工具：格式前提（单行、纯 ASCII、无控制字符、可解析）", () => {
   assert.ok(DIST_TEXT.startsWith("javascript:"), "必须是一个 javascript: 地址");

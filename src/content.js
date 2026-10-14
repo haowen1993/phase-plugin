@@ -228,7 +228,7 @@
     } catch (error) {
       // 配额用尽（或隐私模式禁用存储）：说出来，别静默变成「有时记得住有时记不住」。
       // 内存缓存仍然有效，所以本页不受影响，只是下次刷新要重新查。
-      if (debug()) console.warn("[phase-rs-zh] 卡图缓存写不进 localStorage，本次会话内仍然有效", error);
+      if (debug()) console.warn("[phase-plugin] 卡图缓存写不进 localStorage，本次会话内仍然有效", error);
     }
   }
 
@@ -430,7 +430,7 @@
         if (!response.ok) return 0;
         const added = buildLocalizedIndex(await response.json());
         if (added > 0 && debug()) {
-          console.info(`[phase-rs-zh] 已取得本地化表（${code}）：${added} 条 URL → 英文印刷 id`);
+          console.info(`[phase-plugin] 已取得本地化表（${code}）：${added} 条 URL → 英文印刷 id`);
         }
         return added;
       } catch {
@@ -459,7 +459,7 @@
             .then((payload) => {
               const added = payload ? buildLocalizedIndex(payload) : 0;
               if (added > 0 && debug()) {
-                console.info(`[phase-rs-zh] 已截获应用的本地化表：${added} 条 URL → 英文印刷 id`);
+                console.info(`[phase-plugin] 已截获应用的本地化表：${added} 条 URL → 英文印刷 id`);
               }
               return added;
             })
@@ -682,7 +682,7 @@
           if (target instanceof HTMLImageElement) queueArtLookups(target);
         }
       } catch (error) {
-        if (debug()) console.warn("[phase-rs-zh] 卡图处理出错", error);
+        if (debug()) console.warn("[phase-plugin] 卡图处理出错", error);
       }
     });
     observer.observe(root, { subtree: true, attributes: true, attributeFilter: ["src", "srcset"] });
@@ -695,7 +695,7 @@
       try {
         queueArtLookups(image);
       } catch (error) {
-        if (debug()) console.warn("[phase-rs-zh] 卡图处理失败", error);
+        if (debug()) console.warn("[phase-plugin] 卡图处理失败", error);
       }
     }
   }
@@ -1252,7 +1252,7 @@
     // 时，这条警告就是最先冒出来的信号。
     const byText = phaseByText(button);
     if (byText !== null && byText !== byPlace && debug()) {
-      console.warn(`[phase-rs-zh] 阶段图标的结构判据与文案判据不一致：位置=${byPlace} 文案=${byText}`);
+      console.warn(`[phase-plugin] 阶段图标的结构判据与文案判据不一致：位置=${byPlace} 文案=${byText}`);
     }
     return byPlace;
   }
@@ -1281,7 +1281,7 @@
         if (phase !== null) planned.set(icon, phase);
       } catch (error) {
         // 一个图标认不出来不该影响别的。
-        if (debug()) console.warn("[phase-rs-zh] 阶段图标识别失败", error);
+        if (debug()) console.warn("[phase-plugin] 阶段图标识别失败", error);
       }
     }
     return planned;
@@ -1293,7 +1293,7 @@
       candidates = Array.from(document.querySelectorAll(ICON_SELECTOR)).filter(isUnpatchedIcon);
     } catch (error) {
       // querySelectorAll 本身不该抛，但这里多一层兜底的成本是零。
-      if (debug()) console.warn("[phase-rs-zh] 阶段图标候选收集失败", error);
+      if (debug()) console.warn("[phase-plugin] 阶段图标候选收集失败", error);
       return;
     }
     const planned = resolvePhases(candidates);
@@ -1303,7 +1303,7 @@
         // 标记由 patchIcon 负责打（它要先标记再注入，避免注入失败时被反复重试）。
         patchIcon(icon, phase);
       } catch (error) {
-        if (debug()) console.warn("[phase-rs-zh] 阶段图标替换失败", error);
+        if (debug()) console.warn("[phase-plugin] 阶段图标替换失败", error);
       }
     }
   }
@@ -1374,7 +1374,7 @@
         }
         scanPhaseIcons();
       } catch (error) {
-        if (debug()) console.warn("[phase-rs-zh] 阶段图标扫描失败", error);
+        if (debug()) console.warn("[phase-plugin] 阶段图标扫描失败", error);
       }
     });
     observer.observe(root, { subtree: true, childList: true });
@@ -1449,7 +1449,7 @@
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") { flushArtCache(); flushWarmed(); }
     });
-    console.info(`[phase-rs-zh] 已启用 v${VERSION}（卡图 + 阶段图标）`);
+    console.info(`[phase-plugin] 已启用 v${VERSION}（卡图 + 阶段图标）`);
   }
 
   /**
@@ -1480,7 +1480,7 @@
           try {
             queueArtLookups(this);
           } catch (error) {
-            if (debug()) console.warn("[phase-rs-zh] 卡图排队失败", error);
+            if (debug()) console.warn("[phase-plugin] 卡图排队失败", error);
           }
         }
       }
@@ -1598,7 +1598,7 @@
     try {
       install();
     } catch (error) {
-      console.error("[phase-rs-zh] 装配失败", error);
+      console.error("[phase-plugin] 装配失败", error);
     }
   }
 })();

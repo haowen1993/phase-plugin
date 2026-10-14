@@ -130,14 +130,15 @@ function installPage(bookmarkletUrl, codeHash, codeBytes) {
   :root { color-scheme: light dark; }
   body { font: 16px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif;
          max-width: 34rem; margin: 12vh auto; padding: 0 1.25rem; }
+  /* 按钮配色取自大学院废墟（mtgch.com）的实测值：主按钮 #1772b4、导航深蓝 #0e446c */
   .drag { display: inline-block; margin: .5rem 0; padding: .8rem 1.6rem;
-          border-radius: .6rem; background: #c8102e; color: #ffd400; font-weight: 700;
-          font-size: 1.1rem; text-decoration: none; border: 2px solid #8f0b20; }
+          border-radius: .6rem; background: #1772b4; color: #fff; font-weight: 700;
+          font-size: 1.1rem; text-decoration: none; border: 2px solid #0e446c; }
   ol { padding-left: 1.4rem; }
   li { margin: .5rem 0; }
   code { background: rgba(127,127,127,.16); padding: .1rem .35rem; border-radius: .25rem; }
   .note { color: #b45309; }
-  details { margin-top: 2rem; font-size: .9rem; }
+  h2 { font-size: 1.05rem; margin: 2.25rem 0 .5rem; }
   textarea { width: 100%; height: 5rem; margin-top: .5rem;
              font: 12px/1.5 ui-monospace, monospace; }
   footer { margin-top: 2.5rem; font-size: .8rem; opacity: .55; }
@@ -146,22 +147,21 @@ function installPage(bookmarkletUrl, codeHash, codeBytes) {
 <body>
 <h1>安装 phase-plugin</h1>
 
-<p>把下面这个按钮 <strong>拖到书签栏</strong>（拖不动就右键它，选「添加到书签」）：</p>
-
-<p><a class="drag" href="${bookmarkletUrl}">中文卡图</a></p>
+<p><a class="drag" href="${bookmarkletUrl}">phase插件</a></p>
 
 <ol>
+  <li>把上面这个「phase插件」按钮拖到书签栏</li>
   <li>打开 <a href="https://phase-rs.dev">phase-rs.dev</a></li>
-  <li><strong>点一下书签栏里的「中文卡图」</strong></li>
+  <li>进入游戏对局，点一下书签栏里的「phase插件」</li>
 </ol>
 
 <p class="note">⚠️ 每次刷新或重开页面都要再点一次。页面内的跳转不用。</p>
 
-<details>
-  <summary>拖不动？手动粘贴地址</summary>
-  <p>新建一个书签，把它的<strong>地址</strong>整段替换成下面这行：</p>
-  <textarea readonly onclick="this.select()">${bookmarkletUrl}</textarea>
-</details>
+<h2>拖不动？手动粘贴地址</h2>
+
+<p>新建一个书签，把它的<strong>地址</strong>整段替换成下面这行：</p>
+
+<textarea readonly onclick="this.select()">${bookmarkletUrl}</textarea>
 
 <footer>
   phase-plugin · 正文 ${codeBytes} 字节 ·

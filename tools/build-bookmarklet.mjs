@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * 生成书签小工具（bookmarklet）三件套：
+ * 生成书签小工具（bookmarklet）与用户脚本：
  *
  *     node tools/build-bookmarklet.mjs
  *
  *   dist/phase-plugin.bookmarklet.js   压缩后的代码本体（供人审阅/比对）
  *   dist/phase-plugin.bookmarklet.txt  可直接粘贴为书签地址的 javascript: 一行
+ *   dist/phase-plugin.user.js          用户脚本（Tampermonkey / Violentmonkey），同一份正文
  *   dist/install.html           拖拽安装页（Safari 上最省事的安装方式）
  *
  * 为什么必须压缩，而不是直接把 src/content.js 塞进 javascript: URL：
@@ -35,6 +36,7 @@ const OUT_DIR = join(ROOT, "dist");
 const OUT_JS = join(OUT_DIR, "phase-plugin.bookmarklet.js");
 const OUT_TXT = join(OUT_DIR, "phase-plugin.bookmarklet.txt");
 const OUT_HTML = join(OUT_DIR, "install.html");
+const OUT_USER = join(OUT_DIR, "phase-plugin.user.js");
 
 /**
  * GitHub Pages 的入口。
@@ -172,7 +174,62 @@ function installPage(bookmarkletUrl, codeHash, codeBytes) {
 `;
 }
 
+/**
+ * 用户脚本（Tampermonkey / Violentmonkey / Safari 上的 Userscripts）形态。
+ *
+ * 和书签**共用同一份压缩正文**，不同的只有投递方式。但有两处必须写对，
+ * 否则在 PWA / 独立窗口里会静默失效：
+ *
+ *  1. **必须进页面主世界**：`@grant none`（Tampermonkey）/ `@inject-into page`
+ *     （Violentmonkey）。插件要改的是页面自己的 `Element.prototype.setAttribute`
+ *     和 `window.fetch`，扩展的隔离世界改不动。
+ *  2. **`document-start` 时要等 `<html>` 出现**：插件给 `documentElement` 挂
+ *     MutationObserver，拿不到会静默返回（src/content.js 的 observeCardImages /
+ *     observePhaseIcons）。所以正文外面套一层 boot 守卫——`<html>` 已在就直接装，
+ *     不在就等它被插入，通常只差几微秒，仍早于应用自己的脚本。
+ *
+ * 三个浏览器都得能用是选 `document-start` 而不是 `document-end` 的原因：后者要等
+ * DOM 就绪，应用（module 脚本在解析后、DOMContentLoaded 前执行）已经渲染过一轮，
+ * 首屏卡图会闪一下英文再变中文。
+ */
+function userScript(code, codeHash, version) {
+  return `// ==UserScript==
+// @name         phase插件
+// @name:en      phase-plugin
+// @namespace    https://github.com/haowen1993/phase-plugin
+// @version      ${version}
+// @description  phase.rs 的中文卡图（大学院废墟）+ 更好认的阶段图标
+// @author       haowen1993
+// @match        https://phase-rs.dev/*
+// @match        https://*.phase-rs.dev/*
+// @run-at       document-start
+// @grant        none
+// @inject-into  page
+// @homepageURL  https://haowen1993.github.io/phase-plugin/
+// @supportURL   https://github.com/haowen1993/phase-plugin/issues
+// @downloadURL  https://raw.githubusercontent.com/haowen1993/phase-plugin/main/dist/phase-plugin.user.js
+// @updateURL    https://raw.githubusercontent.com/haowen1993/phase-plugin/main/dist/phase-plugin.user.js
+// ==/UserScript==
+
+(function () {
+  function boot() {
+${code}
+  }
+  if (document.documentElement) { boot(); return; }
+  var waiting = new MutationObserver(function () {
+    if (!document.documentElement) return;
+    waiting.disconnect();
+    boot();
+  });
+  waiting.observe(document, { childList: true });
+})();
+// source: src/content.js
+// source sha256 (前 12 位): ${codeHash}
+`;
+}
+
 const source = readFileSync(SOURCE_PATH, "utf8");
+const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 const code = minify(source);
 const bookmarkletUrl = toBookmarkletUrl(code);
 const codeHash = createHash("sha256").update(source).digest("hex").slice(0, 12);
@@ -191,6 +248,13 @@ writeFileSync(
 );
 writeFileSync(OUT_TXT, bookmarkletUrl, "utf8");
 
+// 用户脚本的 @version 要在**代码里也查得到**，否则升版本时会出现「脚本管理器以为
+// 是新的、正文却还是旧的」这种最难查的漂移。
+if (!code.includes(pkg.version)) {
+  throw new Error(`压缩正文里找不到 package.json 的版本号 ${pkg.version}——两处版本漂了`);
+}
+writeFileSync(OUT_USER, userScript(code, codeHash, pkg.version), "utf8");
+
 const page = installPage(bookmarkletUrl, codeHash, Buffer.byteLength(code, "utf8"));
 writeFileSync(OUT_HTML, page, "utf8");
 
@@ -202,6 +266,6 @@ writeFileSync(join(dirname(OUT_PAGES), ".nojekyll"), "", "utf8");
 
 console.log(`正文 ${Buffer.byteLength(code, "utf8")} 字节 → 书签地址 ${bookmarkletUrl.length} 字节`);
 console.log(`内容 sha256 前 12 位: ${codeHash}`);
-for (const path of [OUT_JS, OUT_TXT, OUT_HTML, OUT_PAGES]) {
+for (const path of [OUT_JS, OUT_TXT, OUT_USER, OUT_HTML, OUT_PAGES]) {
   console.log(`  已生成 ${path.replace(`${REPO}/`, "")}`);
 }

@@ -75,6 +75,14 @@ userscript 管理器的默认沙箱也改不了（所以必须写 `@inject-into 
 代价是注入时机由你点击决定，而不是页面加载时。脚本对此不敏感：它既给后续的属性写入
 打补丁，也会在注入瞬间扫一遍页面上已存在的卡图，所以点之前已经渲染出来的卡同样会变中文。
 
+**用户脚本还多一个坑：`document-start` 那一刻 `<html>` 还没生成。** 实测（CDP 的
+`addScriptToEvaluateOnNewDocument`，时机等价于 `document-start`）：注入时
+`document.documentElement === null`、`readyState === "loading"`。而插件正是给
+`documentElement` 挂 MutationObserver，拿不到会**静默返回**——脚本看起来跑过了，
+图标和后续卡图却都不生效，是最难查的那种失败。所以生成的用户脚本在正文外套了一层
+boot 守卫：`<html>` 已在就直接装配，不在就等它被插入（通常只差几微秒，仍早于应用自己的
+module 脚本——module 要等文档解析完才执行）。测试里有一条专门守着这个守卫，别顺手删掉。
+
 ### 三个必须小心的地方
 
 **一、失败时不能交给应用自己的降级链。** phase.rs 的 `CardImage` 带
@@ -321,7 +329,7 @@ node /path/to/phase-plugin/tools/check-app-data-coverage.mjs
 
 ```
 src/content.js                  逻辑——你唯一要改的文件
-tools/build-bookmarklet.mjs     重新生成三个产物
+tools/build-bookmarklet.mjs     重新生成四个产物
 test/content.test.mjs           零依赖测试（node --test）
 dist/                           产物；可再生，但留着省事
 README.md                       面向使用者：安装与常见问题
@@ -352,8 +360,8 @@ node_modules/                     esbuild + vitest + happy-dom，删了 npm inst
 ## 维护
 
 ```bash
-npm run build      # 从 src/content.js 重新生成 dist/ 三件套
-npm test           # 零依赖：纯逻辑 + 产物同源/等价校验（18 项）
+npm run build      # 从 src/content.js 重新生成 dist/ 四件套
+npm test           # 零依赖：纯逻辑 + 产物同源/等价校验（24 项）
 npm run check:live # 对真实图床核对三级阶梯（需要网络）
 npm run test:dom   # DOM 装配测试（11 项，需先 npm install）
 ```
@@ -859,6 +867,12 @@ URL** 发一次 `Range: bytes=0-0` 的 `fetch`，只为读状态码（404 = 这�
   浏览器打开，把按钮拖到书签栏就完事。文件纯自包含，不需要托管。
 - **发一行字**：把 `dist/phase-plugin.bookmarklet.txt` 里那一整行（约 6.4 KB）连同
   「新建书签 → 把地址替换成这一行 → 打开 phase.rs 后点它」贴进聊天即可。
+- **给 PWA / 独立窗口**：`dist/phase-plugin.user.js`。装成 PWA 之后窗口没有书签栏也没有
+  地址栏，书签那条路在那里**根本没有入口**，用户脚本是唯一能自动生效的形式。装法：
+  Tampermonkey / Violentmonkey（Chrome、Edge），Safari 上用 Userscripts；管理器里新建
+  脚本、整份粘进去即可，也可以直接打开这个文件的 raw URL 让管理器接管安装。
+  它会跟着 `@version` 自动更新——**升版本时记得 `npm run build` 重新生成**，否则管理器
+  以为拿到的是新版、正文却还是旧的。
 - **挂一个链接**：想给一群人用就把它挂到任意静态托管上分享 URL。
   例如用 GitHub Pages（`git subtree` 不一定可用，所以用临时目录建分支）：
 
@@ -888,7 +902,8 @@ phase-plugin/
 ├── dist/
 │   ├── install.html                        安装页（拖拽 / 右键 / 复制地址）
 │   ├── phase-plugin.bookmarklet.txt         书签地址（javascript: 一行）
-│   └── phase-plugin.bookmarklet.js          未编码的压缩正文（供审阅）
+│   ├── phase-plugin.bookmarklet.js          未编码的压缩正文（供审阅）
+│   └── phase-plugin.user.js                 用户脚本（PWA / 独立窗口用；同一份正文 + 元数据头）
 ├── docs/
 │   ├── index.html                          GitHub Pages 入口，与 dist/install.html 逐字节相同
 │   ├── icon-comparison.png                 12 个阶段的完整对照表（由 build:preview 生成）

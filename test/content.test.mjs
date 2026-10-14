@@ -195,6 +195,47 @@ test("书签小工具：与 src/content.js 行为一致", () => {
 });
 
 
+// ── 用户脚本产物（PWA / 独立窗口里唯一可行的投递方式）────────────────────
+
+const DIST_USER = readFileSync(new URL("../dist/phase-plugin.user.js", import.meta.url), "utf8");
+
+test("用户脚本：元数据齐全，正文与书签同源", () => {
+  // 管理器只认文件最前面的元数据块，前面多一行注释都可能让整份脚本失效。
+  assert.ok(DIST_USER.startsWith("// ==UserScript==\n"), "元数据块必须在文件第一行");
+  assert.ok(DIST_USER.includes("\n// ==/UserScript==\n"), "元数据块没有正常收尾");
+
+  for (const line of [
+    "// @match        https://phase-rs.dev/*",
+    // 主世界是硬要求：插件改的是页面自己的 setAttribute 与 fetch，隔离世界改不动。
+    "// @grant        none",
+    "// @inject-into  page",
+    // 首屏不闪的前提：应用是 module 脚本（解析后、DOMContentLoaded 前执行），
+    // 等到 document-end 才装就已经渲染过一轮了。
+    "// @run-at       document-start",
+  ]) {
+    assert.ok(DIST_USER.includes(line), `用户脚本缺少 ${line}`);
+  }
+
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.ok(DIST_USER.includes(`// @version      ${pkg.version}`), "版本号应与 package.json 一致");
+
+  // 同一份压缩正文：书签解出来的那段应当原样出现在用户脚本里。
+  const body = decodeURIComponent(DIST_TEXT.slice("javascript:".length));
+  assert.ok(DIST_USER.includes(body), "用户脚本必须内嵌与书签完全相同的正文");
+});
+
+test("用户脚本：正文外面套着 <html> 守卫", () => {
+  // 实测（CDP 的 addScriptToEvaluateOnNewDocument，等价于 document-start）：
+  // 注入那一刻 document.documentElement 还是 null。而插件给 documentElement 挂
+  // MutationObserver，拿不到会**静默返回**（src/content.js 的 observeCardImages /
+  // observePhaseIcons）——一旦没了守卫，脚本看起来跑过了，图标和后续卡图却不生效。
+  assert.ok(DIST_USER.includes("if (document.documentElement) { boot(); return; }"),
+    "缺少 boot 守卫：document-start 时 <html> 还不存在");
+  assert.ok(DIST_USER.includes("waiting.observe(document, { childList: true })"),
+    "守卫没有等 <html> 被插入");
+});
+
+
 // ── 截获应用那张本地化表 + 精确还原英文印刷 id（1.9.1）─────────────────
 
 /** 应用那张表的形状：键 = 英文印刷 id，值 = { id: 中文印刷 id, faces: [...] }。 */

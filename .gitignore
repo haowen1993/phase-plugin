@@ -1,1 +1,8 @@
 node_modules/
+
+# macOS
+.DS_Store
+
+# 临时验证目录（无头 Chrome 的 user-data-dir 就放这儿；曾经因为进程没杀干净
+# 被 git add -A 连缓存一起提交过——见 NOTES「临时目录」一节）
+.tmp-*/

@@ -454,6 +454,46 @@ describe("阶段图标：幂等与重渲染", () => {
     expect(iconOf("PostCombatMain")).not.toBeNull();
   });
 
+  it("认得旧版的闸名：先点旧书签再点新版，不会被装配两遍", () => {
+    // 改名前旧版用的是 `__phaseZhCardArtInstalled`。若不认它，「先点旧版、再点新版」
+    // 会在同一页面完整装配两遍——重复观察器、重复 setAttribute 补丁、每张卡发两次
+    // 请求。这里模拟「旧版已经装过」。
+    const cardArt = globalThis.__phaseZhCardArt;
+    expect(typeof cardArt.install, "取不到 install 就说明这个用例是空转的").toBe("function");
+
+    // 用「观察器数量」来判定，**不能用 setAttribute 是否被换过**：那个补丁自带
+    // `__phaseZhPatched` 幂等标记，本来就不会重复打，拿它断言恒真（踩过——第一版
+    // 就是这么写的，反向验证时「去掉兼容代码也照样通过」才暴露出来）。
+    //
+    // `disconnectObservers()` 会把 liveObservers 排空，所以「排空后再装配能数到几个」
+    // 就是这次装配挂上的观察器数。卡图 1 个 + 图标 1 个 = 2 个。
+    const countObservers = () => {
+      let n = 0;
+      const before = globalThis.MutationObserver;
+      globalThis.MutationObserver = class extends before {
+        constructor(cb) { super(cb); n += 1; }
+      };
+      try { cardArt.install(); } finally { globalThis.MutationObserver = before; }
+      cardArt.disconnectObservers();
+      return n;
+    };
+
+    delete globalThis.__phasePluginInstalled;
+    globalThis.__phaseZhCardArtInstalled = true;   // 模拟「旧版已经装过」
+    try {
+      expect(countObservers(), "认了旧闸名就该只在补扫描，不挂新观察器").toBe(0);
+      expect(globalThis.__phasePluginInstalled, "并把闸名升级成新名字").toBe(true);
+
+      // 对照：闸名全没有时，应当正常挂上 2 个。证明上面那个 0 不是环境本来就挂不上。
+      delete globalThis.__phasePluginInstalled;
+      delete globalThis.__phaseZhCardArtInstalled;
+      expect(countObservers(), "没有闸时应当挂上卡图 + 图标两个观察器").toBe(2);
+    } finally {
+      delete globalThis.__phaseZhCardArtInstalled;
+      delete globalThis.__phasePluginInstalled;
+    }
+  });
+
   it("重复装配被幂等闸挡下，但补扫描照常生效", () => {
     mount(playerHud());
     icons().scanPhaseIcons();

@@ -667,11 +667,12 @@
   }
 
   /**
-   * 排障开关。控制台里执行 `__phaseZhCardArtDebug = true` 之后再点书签，脚本会把
-   * 「为什么这张卡没换」之类的判断过程打到控制台。
+   * 排障开关，**两个功能共用**。控制台里执行 `__phasePluginDebug = true` 之后再点
+   * 书签，脚本会把「为什么这张卡没换」「为什么这个图标没认出来」之类的判断过程打到
+   * 控制台。（它放在卡图区块里只是因为卡图先写；图标侧的排障日志也用同一个开关。）
    */
   function debug() {
-    return globalThis.__phaseZhCardArtDebug === true;
+    return globalThis.__phasePluginDebug === true;
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -1375,12 +1376,17 @@
    * 共用闸门是对的——重复点击时两边都不该再挂第二份。
    */
   function install() {
-    if (globalThis.__phaseZhCardArtInstalled === true) {
+    // 旧版（≤1.9.4）用的闸名是 `__phaseZhCardArtInstalled`。也认它：否则
+    // 「先点旧版书签、再点新版」会在同一页面完整装配两遍（重复观察器、重复
+    // setAttribute 补丁、每张卡发两次请求）。改名是一次性的兼容负担，留着便宜。
+    if (globalThis.__phasePluginInstalled === true
+      || globalThis.__phaseZhCardArtInstalled === true) {
+      globalThis.__phasePluginInstalled = true;
       scanCardImages();
       scanPhaseIcons();
       return;
     }
-    globalThis.__phaseZhCardArtInstalled = true;
+    globalThis.__phasePluginInstalled = true;
 
     // 卡图在**中英文界面下都生效**（1.9.1 起）。两种界面的差别只在「怎么拿到英文
     // 印刷 id」：

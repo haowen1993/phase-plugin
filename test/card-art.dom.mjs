@@ -205,7 +205,7 @@ function reinstall() {
   for (const key of Object.keys(art.artCache)) delete art.artCache[key];
   storage = makeStorage();
   Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: storage });
-  delete globalThis.__phaseZhCardArtInstalled;
+  delete globalThis.__phasePluginInstalled;
   art.install();
 }
 
